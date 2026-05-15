@@ -1,11 +1,10 @@
-// Firebase Web App config aus der Firebase-Konsole eintragen.
-// Danach als config.js speichern.
 export const firebaseConfig = {
-  apiKey: "DEIN_API_KEY",
-  authDomain: "DEIN_PROJEKT.firebaseapp.com",
-  databaseURL: "https://DEIN_PROJEKT-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "DEIN_PROJEKT",
-  storageBucket: "DEIN_PROJEKT.appspot.com",
-  messagingSenderId: "DEINE_MESSAGING_ID",
-  appId: "DEINE_APP_ID"
+  apiKey: "AIzaSyDQMG-abkDEBtJzkjoGyLnKkCPWWSNAGx0",
+  authDomain: "wizardonline-3c4f3.firebaseapp.com",
+  databaseURL: "https://wizardonline-3c4f3-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "wizardonline-3c4f3",
+  storageBucket: "wizardonline-3c4f3.firebasestorage.app",
+  messagingSenderId: "256537136178",
+  appId: "1:256537136178:web:152f9e95581b3017cb402b",
+  measurementId: "G-KJQFHEJ37W"
 };
