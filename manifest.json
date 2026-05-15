@@ -1,0 +1,15 @@
+{
+  "name": "Wizard Online",
+  "short_name": "Wizard",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#140c1f",
+  "theme_color": "#1a1026",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
