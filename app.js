@@ -171,14 +171,6 @@ function dealerPlayerId(room) {
   return order[room.dealerIndex] || null;
 }
 
-function currentBidderId(room) {
-  const order = playerIds(room);
-  if (!order.length) return null;
-  const start = room.bidStartIndex ?? 0;
-  const bids = Object.keys(room.bids || {}).length;
-  return order[(start + bids) % order.length];
-}
-
 function roundSize(room) {
   return room.roundNo || 1;
 }
@@ -199,17 +191,8 @@ function currentTrick(room) {
   return room.currentTrick || [];
 }
 
-function nextIndex(room, index) {
-  const order = playerIds(room);
-  return (index + 1) % order.length;
-}
-
 function isBot(room, playerId) {
   return !!room.players?.[playerId]?.isBot;
-}
-
-function allPlayers(room) {
-  return playerIds(room).map(id => ({ id, ...room.players[id] }));
 }
 
 function cardLabel(card) {
@@ -318,16 +301,15 @@ function botChoosePlay(room, playerId) {
   const hand = handOf(room, playerId);
   const trick = currentTrick(room);
   const legal = legalCards(hand, trick, room.trumpSuit);
-  const bid = room.bids?.[playerId] ?? 0;
-  const taken = room.tricksTaken?.[playerId] ?? 0;
-  const needToWin = taken < bid;
-  const info = getLedSuit(trick);
   const sorted = legal.slice().sort((a, b) => {
+    const info = getLedSuit(trick);
     const sa = cardStrength(a, room.trumpSuit, info.ledSuit);
     const sb = cardStrength(b, room.trumpSuit, info.ledSuit);
     return sa - sb;
   });
-  if (needToWin) return sorted[sorted.length - 1];
+  const bid = room.bids?.[playerId] ?? 0;
+  const taken = room.tricksTaken?.[playerId] ?? 0;
+  if (taken < bid) return sorted[sorted.length - 1];
   return sorted[0];
 }
 
@@ -383,7 +365,6 @@ function buildRoundState(room, roundNo) {
 function initializeGame(room) {
   const order = playerIds(room);
   const n = order.length;
-  room.phase = "bidding";
   room.roundNo = 1;
   room.maxRound = Math.floor(60 / n);
   room.dealerIndex = 0;
@@ -423,32 +404,26 @@ function finishRoundAndMaybeNext(room) {
   return room;
 }
 
-function trickCardsPlayed(room) {
-  return currentTrick(room).length;
-}
-
 function allBidsPlaced(room) {
   return Object.values(room.bids || {}).every(v => v !== null && v !== undefined);
 }
 
-function bidSum(room) {
-  return Object.values(room.bids || {}).reduce((sum, v) => sum + (Number.isFinite(v) ? v : 0), 0);
-}
-
 function validBidOptions(room, playerId) {
   const round = roundSize(room);
-  const existing = Object.values(room.bids || {}).reduce((sum, v, idx) => {
-    const id = playerIds(room)[idx];
-    if (id === playerId) return sum;
-    return sum + (Number.isFinite(v) ? v : 0);
-  }, 0);
   const order = playerIds(room);
   const bidderIndex = order.indexOf(playerId);
   const lastBidderIndex = (room.bidStartIndex + order.length - 1) % order.length;
   const isLast = bidderIndex === lastBidderIndex;
+  
+  const existing = order.reduce((sum, id) => {
+    if (id === playerId) return sum;
+    const v = room.bids?.[id];
+    return sum + (Number.isFinite(v) ? v : 0);
+  }, 0);
+
   const options = [];
   for (let b = 0; b <= round; b++) {
-    if (isLast && existing + b === round) continue;
+    if (isLast && (existing + b) === round) continue;
     options.push(b);
   }
   return options;
@@ -505,7 +480,6 @@ function renderRoom(state) {
   const meIsHost = state.hostId === currentPlayerId;
   const meIsInGame = !!state.players?.[currentPlayerId];
   const currentTurn = currentTurnPlayerId(state);
-  const currentBidder = currentBidderId(state);
 
   order.forEach((id, index) => {
     const p = state.players[id];
@@ -515,7 +489,7 @@ function renderRoom(state) {
       <div class="name">${escapeHtml(p.name)} ${id === currentPlayerId ? '<span class="badge me">Ich</span>' : ''} ${p.isBot ? '<span class="badge bot">Bot</span>' : ''} ${state.hostId === id ? '<span class="badge host">Host</span>' : ''}</div>
       <div>${Number(p.score || 0)}</div>
       <div>${Number(state.tricksTaken?.[id] || 0)} Stich${Number(state.tricksTaken?.[id] || 0) === 1 ? "" : "e"}</div>
-      <div>${state.phase === "bidding" && currentBidder === id ? '<span class="badge">Ansage dran</span>' : currentTurn === id ? '<span class="badge">Zug</span>' : ''}</div>
+      <div>${currentTurn === id ? (state.phase === "bidding" ? '<span class="badge">Ansage dran</span>' : '<span class="badge">Zug</span>') : ''}</div>
     `;
     els.playersList.appendChild(row);
   });
@@ -532,9 +506,9 @@ function renderRoom(state) {
 
   els.bidControls.classList.toggle("hidden", !(state.phase === "bidding" && currentTurn === currentPlayerId && meIsInGame && !state.players[currentPlayerId]?.isBot));
   els.trumpChoiceControls.classList.toggle("hidden", !(state.phase === "choose_trump" && dealerPlayerId(state) === currentPlayerId && !state.players[currentPlayerId]?.isBot));
-  if (state.phase === "bidding" && currentBidder === currentPlayerId) {
+  
+  if (state.phase === "bidding" && currentTurn === currentPlayerId) {
     const options = validBidOptions(state, currentPlayerId);
-    const last = options.length ? Math.max(...options) : 0;
     els.bidHint.textContent = `Erlaubt: ${options.join(", ")}${options.length ? "" : " (kein gültiger Wert)"} `;
     els.bidInput.min = "0";
     els.bidInput.max = String(roundSize(state));
@@ -556,7 +530,7 @@ function renderRoom(state) {
   els.handHint.textContent = state.phase === "playing"
     ? (currentTurn === currentPlayerId ? "Du bist dran. Tippe auf eine Karte." : `Warten auf ${playerName(state, currentTurn)}.`)
     : state.phase === "bidding"
-      ? (currentBidder === currentPlayerId ? "Du musst deine Ansage senden." : `Warten auf ${playerName(state, currentBidder)}.`)
+      ? (currentTurn === currentPlayerId ? "Du musst deine Ansage senden." : `Warten auf ${playerName(state, currentTurn)}.`)
       : state.phase === "choose_trump"
         ? (dealerPlayerId(state) === currentPlayerId ? "Du bist der Geber und darfst Trumpf wählen." : `Warten auf ${playerName(state, dealerPlayerId(state))}.`)
         : "Keine Kartenphase.";
@@ -646,7 +620,6 @@ function renderScores(state) {
   rows.forEach((r, idx) => {
     const row = document.createElement("div");
     row.className = "scoreRow";
-    if (state.phase === "finished" && state.winnerId === r.id) row.querySelector?.(".winner");
     row.innerHTML = `
       <div class="${state.phase === "finished" && state.winnerId === r.id ? "winner" : ""}">${escapeHtml(r.name)} ${state.winnerId === r.id ? "🏆" : ""}</div>
       <div>${r.score}</div>
@@ -771,7 +744,6 @@ async function joinOrCreateRoom(isCreate = false) {
       return room;
     }
 
-    // active game: reconnect as participant if already in game, otherwise spectator
     if (!alreadyPlayer) {
       room.spectators[currentPlayerId] = { id: currentPlayerId, name, joinedAt: Date.now() };
       room.message = `${name} ist als Zuschauer beigetreten.`;
@@ -794,7 +766,7 @@ async function joinOrCreateRoom(isCreate = false) {
 function listenToRoom(roomCode) {
   if (roomUnsub) roomUnsub();
   const roomReference = roomRef(roomCode);
-  onValue(roomReference, snapshot => {
+  roomUnsub = onValue(roomReference, snapshot => {
     const state = snapshot.val();
     if (!state) return;
     roomCache = state;
@@ -876,13 +848,13 @@ async function chooseTrumpSuit(suitKey) {
   const roomReference = roomRef(currentRoomCode);
   await runTransaction(roomReference, room => {
     if (!room || room.phase !== "choose_trump") return room;
-    if (currentTurnPlayerId(room) !== room.order[room.pendingTrumpChoiceSeat]) return room;
-    if (room.order[room.pendingTrumpChoiceSeat] !== currentPlayerId && !isBot(room, room.order[room.pendingTrumpChoiceSeat])) return room;
+    const currentTurn = currentTurnPlayerId(room);
+    if (currentTurn !== currentPlayerId && !isBot(room, currentTurn)) return room;
     room.trumpSuit = suitKey;
     room.phase = "bidding";
     room.turnIndex = room.bidStartIndex;
     room.pendingTrumpChoiceSeat = null;
-    room.message = `Trumpf: ${SUIT_BY_KEY[suitKey]?.label || "—"}`;
+    room.message = `Trumpf: ${SUIT_BY_KEY[suitKey]?.label || "—"}. Ansage bei ${playerName(room, room.order[room.turnIndex])}`;
     return room;
   });
 }
@@ -895,21 +867,23 @@ async function sendBid() {
   await runTransaction(roomReference, room => {
     if (!room || room.phase !== "bidding") return room;
     const order = playerIds(room);
-    const bidderId = currentBidderId(room);
+    const bidderId = currentTurnPlayerId(room);
     if (bidderId !== currentPlayerId) return room;
     const allowed = validBidOptions(room, currentPlayerId);
     if (!allowed.includes(bidValue)) return room;
+    
     room.bids[currentPlayerId] = bidValue;
     const nextIndex = Object.values(room.bids).filter(v => v !== null && v !== undefined).length;
     room.currentBidOrderIndex = nextIndex;
+    
     if (allBidsPlaced(room)) {
       room.phase = "playing";
       room.turnIndex = room.leaderIndex;
-      room.message = "Die Spielrunde läuft.";
+      room.message = `Spielrunde läuft. ${playerName(room, room.order[room.turnIndex])} spielt aus.`;
       return room;
     }
     room.turnIndex = (room.bidStartIndex + nextIndex) % order.length;
-    room.message = `${playerName(room, room.order[room.turnIndex])} ist am Zug.`;
+    room.message = `Warten auf Ansage von ${playerName(room, room.order[room.turnIndex])}`;
     return room;
   });
 }
@@ -983,13 +957,7 @@ async function nextRound() {
 function maybeScheduleBot(state) {
   if (!state) return;
   const order = playerIds(state);
-  const turnId = currentTurnPlayerId(state);
-  const bidderId = state.phase === "bidding" ? currentBidderId(state) : null;
-  const botId = state.phase === "choose_trump"
-    ? order[state.pendingTrumpChoiceSeat]
-    : state.phase === "bidding"
-      ? bidderId
-      : turnId;
+  const botId = currentTurnPlayerId(state);
 
   if (!botId || !isBot(state, botId)) return;
 
@@ -1000,11 +968,7 @@ function maybeScheduleBot(state) {
   window.setTimeout(async () => {
     const fresh = roomCache;
     if (!fresh) return;
-    const currentBotId = fresh.phase === "choose_trump"
-      ? playerIds(fresh)[fresh.pendingTrumpChoiceSeat]
-      : fresh.phase === "bidding"
-        ? currentBidderId(fresh)
-        : currentTurnPlayerId(fresh);
+    const currentBotId = currentTurnPlayerId(fresh);
     if (!currentBotId || !isBot(fresh, currentBotId)) return;
 
     if (fresh.phase === "choose_trump") {
@@ -1014,31 +978,31 @@ function maybeScheduleBot(state) {
 
     if (fresh.phase === "bidding") {
       const choice = botBid(fresh, currentBotId);
-      els.bidInput.value = String(choice);
       await runTransaction(roomRef(currentRoomCode), room => {
         if (!room || room.phase !== "bidding") return room;
-        const bidder = currentBidderId(room);
+        const bidder = currentTurnPlayerId(room);
         if (bidder !== currentBotId) return room;
         const allowed = validBidOptions(room, currentBotId);
         if (!allowed.includes(choice)) return room;
+        
         room.bids[currentBotId] = choice;
         const nextIndex = Object.values(room.bids).filter(v => v !== null && v !== undefined).length;
         room.currentBidOrderIndex = nextIndex;
+        
         if (allBidsPlaced(room)) {
           room.phase = "playing";
           room.turnIndex = room.leaderIndex;
-          room.message = "Die Spielrunde läuft.";
+          room.message = `Spielrunde läuft. ${playerName(room, room.order[room.turnIndex])} spielt aus.`;
           return room;
         }
         room.turnIndex = (room.bidStartIndex + nextIndex) % order.length;
-        room.message = `${playerName(room, room.order[room.turnIndex])} ist am Zug.`;
+        room.message = `Warten auf Ansage von ${playerName(room, room.order[room.turnIndex])}`;
         return room;
       });
       return;
     }
 
     if (fresh.phase === "playing") {
-      const hand = handOf(fresh, currentBotId);
       const card = botChoosePlay(fresh, currentBotId);
       if (card) {
         await runTransaction(roomRef(currentRoomCode), room => {
