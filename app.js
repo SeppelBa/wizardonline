@@ -67,7 +67,7 @@ const els = {
   closeOverlayBtn: document.getElementById("closeOverlayBtn"),
   leaderboardList: document.getElementById("leaderboardList"),
   toastContainer: document.getElementById("toastContainer"),
-  musicBtn: document.getElementById("musicBtn"), // Musik-Button registriert
+  musicBtn: document.getElementById("musicBtn") // HIER WAR DER FEHLER: Jetzt sauber registriert!
 };
 
 const LOCAL = {
@@ -385,7 +385,6 @@ function initializeGame(room) {
   const order = playerIds(room);
   const n = order.length;
   room.roundNo = 1;
-  // Limitierung für 2 Spieler auf maximal 20 Runden angepasst
   room.maxRound = n === 2 ? 20 : Math.floor(60 / n);
   room.dealerIndex = 0;
   room.hostId = room.hostId || order[0];
@@ -561,7 +560,6 @@ function renderRoom(state) {
   renderHand(state);
   renderScores(state);
 
-  // Validierung auf MIN_PLAYERS (2) herabgesenkt
   els.startBtn.disabled = !(meIsHost && state.phase === "lobby" && order.length >= MIN_PLAYERS && order.length <= MAX_PLAYERS);
   els.resetBtn.disabled = !meIsHost && state.phase !== "lobby";
   els.addBotBtn.disabled = !(meIsHost && state.phase === "lobby");
@@ -575,7 +573,6 @@ function renderRoom(state) {
     const options = validBidOptions(state, currentPlayerId);
     els.bidHint.textContent = `Erlaubt: ${options.join(", ")}`;
     
-    // Zähler zurücksetzen falls er außerhalb der Optionen liegt
     if (currentSelectedBid > roundSize(state)) {
       currentSelectedBid = 0;
     }
@@ -1298,7 +1295,7 @@ async function nextRound() {
       room.trumpCard = null;
       room.trumpSuit = null;
       room.pendingTrumpChoiceSeat = null;
-      room.winnerId = null;
+      winnerId = null;
       room.message = "Neue Partie bereit.";
       return room;
     }
