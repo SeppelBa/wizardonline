@@ -406,7 +406,8 @@ function finishRoundAndMaybeNext(room) {
 }
 
 function allBidsPlaced(room) {
-  return Object.values(room.bids || {}).every(v => v !== null && v !== undefined);
+  const order = playerIds(room);
+  return order.every(id => room.bids && room.bids[id] !== null && room.bids[id] !== undefined);
 }
 
 function validBidOptions(room, playerId) {
@@ -443,7 +444,7 @@ function setLocalName(name) {
 function showJoinView(show) {
   els.joinView.classList.toggle("hidden", !show);
   els.gameView.classList.toggle("hidden", show);
-  els.leaveBtn.classList.toggle("hidden", show); // Zeigt/versteckt den Verlassen-Button
+  els.leaveBtn.classList.toggle("hidden", show);
 }
 
 function setStatusText(state) {
@@ -468,9 +469,9 @@ function nicePhase(phase) {
 
 function renderTrump(state) {
   if (!state?.trumpCard) return "—";
-  if (state.trumpCard.kind === "wizard") return "Zauberer → Wahl";
-  if (state.trumpCard.kind === "jester") return "Kein Trumpf";
-  return SUIT_BY_KEY[state.trumpCard.suit]?.label || "—";
+  if (state.trumpCard.kind === "wizard") return "Wahl";
+  if (state.trumpCard.kind === "jester") return "Kein";
+  return SUIT_BY_KEY[state.trumpCard.suit]?.short || "—";
 }
 
 function renderRoom(state) {
@@ -489,9 +490,9 @@ function renderRoom(state) {
     row.className = "playerRow";
     row.innerHTML = `
       <div class="name">${escapeHtml(p.name)} ${id === currentPlayerId ? '<span class="badge me">Ich</span>' : ''} ${p.isBot ? '<span class="badge bot">Bot</span>' : ''} ${state.hostId === id ? '<span class="badge host">Host</span>' : ''}</div>
-      <div>${Number(p.score || 0)}</div>
-      <div>${Number(state.tricksTaken?.[id] || 0)} Stich${Number(state.tricksTaken?.[id] || 0) === 1 ? "" : "e"}</div>
-      <div>${currentTurn === id ? (state.phase === "bidding" ? '<span class="badge">Ansage dran</span>' : '<span class="badge">Zug</span>') : ''}</div>
+      <div>${Number(p.score || 0)} P</div>
+      <div>${Number(state.tricksTaken?.[id] || 0)} St.</div>
+      <div>${currentTurn === id ? (state.phase === "bidding" ? '<span class="badge">Ansage</span>' : '<span class="badge">Zug</span>') : ''}</div>
     `;
     els.playersList.appendChild(row);
   });
@@ -511,7 +512,7 @@ function renderRoom(state) {
   
   if (state.phase === "bidding" && currentTurn === currentPlayerId) {
     const options = validBidOptions(state, currentPlayerId);
-    els.bidHint.textContent = `Erlaubt: ${options.join(", ")}${options.length ? "" : " (kein gültiger Wert)"} `;
+    els.bidHint.textContent = `Erlaubt: ${options.join(", ")}`;
     els.bidInput.min = "0";
     els.bidInput.max = String(roundSize(state));
     if (!els.bidInput.value) els.bidInput.value = String(Math.min(roundSize(state), Math.round(roundSize(state) / 2)));
@@ -530,20 +531,16 @@ function renderRoom(state) {
           : `Lobby.`);
 
   els.handHint.textContent = state.phase === "playing"
-    ? (currentTurn === currentPlayerId ? "Du bist dran. Tippe auf eine Karte." : `Warten auf ${playerName(state, currentTurn)}.`)
+    ? (currentTurn === currentPlayerId ? "Du bist dran. Tippe eine Karte." : `Warten auf ${playerName(state, currentTurn)}.`)
     : state.phase === "bidding"
       ? (currentTurn === currentPlayerId ? "Du musst deine Ansage senden." : `Warten auf ${playerName(state, currentTurn)}.`)
       : state.phase === "choose_trump"
-        ? (dealerPlayerId(state) === currentPlayerId ? "Du bist der Geber und darfst Trumpf wählen." : `Warten auf ${playerName(state, dealerPlayerId(state))}.`)
+        ? (dealerPlayerId(state) === currentPlayerId ? "Du darfst Trumpf wählen." : `Warten auf ${playerName(state, dealerPlayerId(state))}.`)
         : "Keine Kartenphase.";
 
   els.trickInfo.textContent = state.phase === "playing"
     ? `Stiche in dieser Runde: ${state.trickCount}/${roundSize(state)}`
-    : state.phase === "bidding"
-      ? `Jeder sagt genau einmal. Der letzte Spieler darf nicht genau die Summe treffen.`
-      : state.phase === "choose_trump"
-        ? `Die aufgedeckte Trumpfkarte ist ein Zauberer. Der Geber wählt die Trumpffarbe.`
-        : "";
+    : "";
 
   els.finishInfo.textContent = state.phase === "finished"
     ? `Gewinner: ${state.winnerId ? playerName(state, state.winnerId) : "—"}`
@@ -616,14 +613,14 @@ function renderScores(state) {
 
   const head = document.createElement("div");
   head.className = "scoreRow";
-  head.innerHTML = `<div><strong>Name</strong></div><div><strong>Punkte</strong></div><div><strong>Ansage</strong></div><div><strong>Stiche</strong></div>`;
+  head.innerHTML = `<div><strong>Name</strong></div><div><strong>Pkt</strong></div><div><strong>Ans.</strong></div><div><strong>St.</strong></div>`;
   els.scores.appendChild(head);
 
   rows.forEach((r, idx) => {
     const row = document.createElement("div");
     row.className = "scoreRow";
     row.innerHTML = `
-      <div class="${state.phase === "finished" && state.winnerId === r.id ? "winner" : ""}">${escapeHtml(r.name)} ${state.winnerId === r.id ? "🏆" : ""}</div>
+      <div class="${state.phase === "finished" && state.winnerId === r.id ? "winner" : ""}">${escapeHtml(r.name)}</div>
       <div>${r.score}</div>
       <div>${r.bid ?? "—"}</div>
       <div>${r.took}</div>
@@ -793,7 +790,6 @@ async function leaveRoom() {
     await runTransaction(roomReference, room => {
       if (!room) return room;
 
-      // Spieler aus Listen entfernen
       if (room.players && room.players[currentPlayerId]) {
         delete room.players[currentPlayerId];
       }
@@ -810,21 +806,18 @@ async function leaveRoom() {
         delete room.tricksTaken[currentPlayerId];
       }
 
-      // Falls der verlassende Spieler der Host war, neuen bestimmen
       if (room.hostId === currentPlayerId) {
         const remainingPlayers = room.order ? room.order.filter(id => !id.startsWith("bot_")) : [];
         if (remainingPlayers.length > 0) {
           room.hostId = remainingPlayers[0];
           room.message = `Der bisherige Host hat den Raum verlassen. Neuer Host ist ${room.players[room.hostId]?.name || "Spieler"}.`;
         } else {
-          // Raum ist komplett leer (oder nur noch Bots) -> löschen
           return null;
         }
       } else {
         room.message = `${currentName || "Ein Spieler"} hat den Raum verlassen.`;
       }
 
-      // Falls das Spiel lief, Indexe korrigieren, um Abstürze zu vermeiden
       if (room.phase !== "lobby" && room.order && room.order.length > 0) {
         if (room.turnIndex >= room.order.length) room.turnIndex = 0;
         if (room.dealerIndex >= room.order.length) room.dealerIndex = 0;
@@ -837,7 +830,6 @@ async function leaveRoom() {
     console.error("Fehler beim Verlassen:", e);
   }
 
-  // UI aufräumen und zurück zur Lobby-Ansicht
   currentRoomCode = "";
   roomCache = null;
   localStorage.removeItem(LOCAL.roomCode);
@@ -961,16 +953,19 @@ async function sendBid() {
       if (!room.bids) room.bids = {};
       
       room.bids[currentPlayerId] = bidValue;
-      const nextIndex = Object.values(room.bids).filter(v => v !== null && v !== undefined).length;
-      room.currentBidOrderIndex = nextIndex;
       
-      if (allBidsPlaced(room)) {
+      // FIX: Zähle nur echte Werte, die nicht null/undefined sind
+      const placedBidsCount = order.filter(id => room.bids[id] !== null && room.bids[id] !== undefined).length;
+      room.currentBidOrderIndex = placedBidsCount;
+      
+      if (placedBidsCount >= order.length) {
         room.phase = "playing";
         room.turnIndex = room.leaderIndex;
         room.message = `Spielrunde läuft. ${playerName(room, room.order[room.turnIndex])} spielt aus.`;
         return room;
       }
-      room.turnIndex = (room.bidStartIndex + nextIndex) % order.length;
+      
+      room.turnIndex = (room.bidStartIndex + placedBidsCount) % order.length;
       room.message = `Warten auf Ansage von ${playerName(room, room.order[room.turnIndex])}`;
       return room;
     });
@@ -1079,16 +1074,17 @@ function maybeScheduleBot(state) {
         
         if (!room.bids) room.bids = {};
         room.bids[currentBotId] = choice;
-        const nextIndex = Object.values(room.bids).filter(v => v !== null && v !== undefined).length;
-        room.currentBidOrderIndex = nextIndex;
         
-        if (allBidsPlaced(room)) {
+        const placedBidsCount = order.filter(id => room.bids[id] !== null && room.bids[id] !== undefined).length;
+        room.currentBidOrderIndex = placedBidsCount;
+        
+        if (placedBidsCount >= order.length) {
           room.phase = "playing";
           room.turnIndex = room.leaderIndex;
           room.message = `Spielrunde läuft. ${playerName(room, room.order[room.turnIndex])} spielt aus.`;
           return room;
         }
-        room.turnIndex = (room.bidStartIndex + nextIndex) % order.length;
+        room.turnIndex = (room.bidStartIndex + placedBidsCount) % order.length;
         room.message = `Warten auf Ansage von ${playerName(room, room.order[room.turnIndex])}`;
         return room;
       });
@@ -1150,7 +1146,7 @@ els.resetBtn.addEventListener("click", resetToLobby);
 els.addBotBtn.addEventListener("click", () => addBot(1));
 els.fillBotsBtn.addEventListener("click", fillBotsTo3);
 els.bidBtn.addEventListener("click", sendBid);
-els.leaveBtn.addEventListener("click", leaveRoom); // Klick-Event für den neuen Button
+els.leaveBtn.addEventListener("click", leaveRoom);
 els.nextRoundBtn.addEventListener("click", nextRound);
 document.querySelectorAll(".suitChoice").forEach(btn => {
   btn.addEventListener("click", () => chooseTrumpSuit(btn.dataset.suit));
