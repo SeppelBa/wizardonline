@@ -67,6 +67,7 @@ const els = {
   closeOverlayBtn: document.getElementById("closeOverlayBtn"),
   leaderboardList: document.getElementById("leaderboardList"),
   toastContainer: document.getElementById("toastContainer"),
+  musicBtn: document.getElementById("musicBtn"), // Musik-Button registriert
 };
 
 const LOCAL = {
@@ -384,7 +385,7 @@ function initializeGame(room) {
   const order = playerIds(room);
   const n = order.length;
   room.roundNo = 1;
-  // Limitierung für 2 Spieler auf maximal 20 Runden angepasst (60 Karten / 2 Spieler = 30, aber offiziell 20 Runden Limit bei 2 Personen)
+  // Limitierung für 2 Spieler auf maximal 20 Runden angepasst
   room.maxRound = n === 2 ? 20 : Math.floor(60 / n);
   room.dealerIndex = 0;
   room.hostId = room.hostId || order[0];
@@ -1167,7 +1168,6 @@ async function addBot(count = 1) {
 
 async function fillBotsTo3() {
   if (!roomCache || roomCache.hostId !== currentPlayerId || roomCache.phase !== "lobby") return;
-  // Füllt auf 3 Spieler auf, falls weniger da sind. Wenn schon 2-3 da sind, passiert nichts.
   const missing = Math.max(0, 3 - playerIds(roomCache).length);
   await addBot(Math.min(missing, MAX_PLAYERS - playerIds(roomCache).length));
 }
@@ -1223,7 +1223,7 @@ async function sendBid() {
       return room;
     });
     
-    currentSelectedBid = 0; // Nach Absenden für die nächste Runde resetten
+    currentSelectedBid = 0;
 
   } catch (error) {
     alert("KRITISCHER FIREBASE FEHLER: " + error.message);
@@ -1480,5 +1480,30 @@ window.addEventListener("beforeunload", () => {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && document.activeElement === els.nameInput || e.key === "Enter" && document.activeElement === els.roomInput) {
     if (els.gameView.classList.contains("hidden")) joinOrCreateRoom(false);
+  }
+});
+
+// ==========================================
+// HIER STARTET DER AUDIO/MUSIK EXTENSION-BLOCK
+// ==========================================
+const audioEl = document.getElementById("bgMusic");
+if (audioEl) {
+  audioEl.volume = 0.25; // Setzt die Grundlautstärke fest
+}
+
+els.musicBtn.addEventListener("click", () => {
+  if (!audioEl) return;
+
+  if (audioEl.paused) {
+    audioEl.play()
+      .then(() => {
+        els.musicBtn.textContent = "⏸️ Musik stoppen";
+      })
+      .catch(err => {
+        console.error("Audio-Wiedergabe fehlgeschlagen:", err);
+      });
+  } else {
+    audioEl.pause();
+    els.musicBtn.textContent = "🎵 Musik starten";
   }
 });
