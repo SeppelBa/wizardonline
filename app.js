@@ -32,6 +32,7 @@ const els = {
   createBtn: document.getElementById("createBtn"),
   shareBtn: document.getElementById("shareBtn"),
   copyRoomBtn: document.getElementById("copyRoomBtn"),
+  leaveBtn: document.getElementById("leaveBtn"),
   roomLabel: document.getElementById("roomLabel"),
   phaseLabel: document.getElementById("phaseLabel"),
   roundLabel: document.getElementById("roundLabel"),
@@ -442,6 +443,7 @@ function setLocalName(name) {
 function showJoinView(show) {
   els.joinView.classList.toggle("hidden", !show);
   els.gameView.classList.toggle("hidden", show);
+  els.leaveBtn.classList.toggle("hidden", show); // Zeigt/versteckt den Verlassen-Button
 }
 
 function setStatusText(state) {
@@ -774,6 +776,75 @@ function listenToRoom(roomCode) {
   });
 }
 
+async function leaveRoom() {
+  if (!currentRoomCode) return;
+  
+  const leaveConfirm = confirm("Möchtest du den Raum wirklich verlassen?");
+  if (!leaveConfirm) return;
+
+  const roomReference = roomRef(currentRoomCode);
+  
+  if (roomUnsub) {
+    roomUnsub();
+    roomUnsub = null;
+  }
+
+  try {
+    await runTransaction(roomReference, room => {
+      if (!room) return room;
+
+      // Spieler aus Listen entfernen
+      if (room.players && room.players[currentPlayerId]) {
+        delete room.players[currentPlayerId];
+      }
+      if (Array.isArray(room.order)) {
+        room.order = room.order.filter(id => id !== currentPlayerId);
+      }
+      if (room.hands && room.hands[currentPlayerId]) {
+        delete room.hands[currentPlayerId];
+      }
+      if (room.bids && room.bids[currentPlayerId] !== undefined) {
+        delete room.bids[currentPlayerId];
+      }
+      if (room.tricksTaken && room.tricksTaken[currentPlayerId] !== undefined) {
+        delete room.tricksTaken[currentPlayerId];
+      }
+
+      // Falls der verlassende Spieler der Host war, neuen bestimmen
+      if (room.hostId === currentPlayerId) {
+        const remainingPlayers = room.order ? room.order.filter(id => !id.startsWith("bot_")) : [];
+        if (remainingPlayers.length > 0) {
+          room.hostId = remainingPlayers[0];
+          room.message = `Der bisherige Host hat den Raum verlassen. Neuer Host ist ${room.players[room.hostId]?.name || "Spieler"}.`;
+        } else {
+          // Raum ist komplett leer (oder nur noch Bots) -> löschen
+          return null;
+        }
+      } else {
+        room.message = `${currentName || "Ein Spieler"} hat den Raum verlassen.`;
+      }
+
+      // Falls das Spiel lief, Indexe korrigieren, um Abstürze zu vermeiden
+      if (room.phase !== "lobby" && room.order && room.order.length > 0) {
+        if (room.turnIndex >= room.order.length) room.turnIndex = 0;
+        if (room.dealerIndex >= room.order.length) room.dealerIndex = 0;
+        if (room.bidStartIndex >= room.order.length) room.bidStartIndex = 0;
+      }
+
+      return room;
+    });
+  } catch (e) {
+    console.error("Fehler beim Verlassen:", e);
+  }
+
+  // UI aufräumen und zurück zur Lobby-Ansicht
+  currentRoomCode = "";
+  roomCache = null;
+  localStorage.removeItem(LOCAL.roomCode);
+  els.roomInput.value = "";
+  showJoinView(true);
+}
+
 async function startGame() {
   if (!roomCache || roomCache.hostId !== currentPlayerId) return;
   const roomReference = roomRef(currentRoomCode);
@@ -866,11 +937,11 @@ async function sendBid() {
   }
   
   let rawValue = els.bidInput.value;
-  if (rawValue === "") rawValue = "0"; // Failsafe fürs Handy
+  if (rawValue === "") rawValue = "0";
   const bidValue = parseInt(rawValue, 10);
   
   if (isNaN(bidValue)) {
-    alert("Fehler: Eingegebener Wert ist keine gültige Zahl! Wert war: " + els.bidInput.value);
+    alert("Fehler: Keine gültige Zahl!");
     return;
   }
   
@@ -878,20 +949,16 @@ async function sendBid() {
   try {
     const result = await runTransaction(roomReference, room => {
       if (!room) return room;
-      if (room.phase !== "bidding") {
-        return room;
-      }
+      if (room.phase !== "bidding") return room;
+      
       const order = playerIds(room);
       const bidderId = currentTurnPlayerId(room);
-      
-      if (bidderId !== currentPlayerId) {
-        return room;
-      }
+      if (bidderId !== currentPlayerId) return room;
       
       const allowed = validBidOptions(room, currentPlayerId);
-      if (!allowed.includes(bidValue)) {
-        return room;
-      }
+      if (!allowed.includes(bidValue)) return room;
+      
+      if (!room.bids) room.bids = {};
       
       room.bids[currentPlayerId] = bidValue;
       const nextIndex = Object.values(room.bids).filter(v => v !== null && v !== undefined).length;
@@ -908,9 +975,6 @@ async function sendBid() {
       return room;
     });
 
-    if (!result.committed) {
-      alert("Firebase Transaktion abgebrochen! Bist du wirklich laut System an der Reihe? Prüfe, ob dein Name im Kasten 'Ansage dran' steht.");
-    }
   } catch (error) {
     alert("KRITISCHER FIREBASE FEHLER: " + error.message);
   }
@@ -1013,6 +1077,7 @@ function maybeScheduleBot(state) {
         const allowed = validBidOptions(room, currentBotId);
         if (!allowed.includes(choice)) return room;
         
+        if (!room.bids) room.bids = {};
         room.bids[currentBotId] = choice;
         const nextIndex = Object.values(room.bids).filter(v => v !== null && v !== undefined).length;
         room.currentBidOrderIndex = nextIndex;
@@ -1085,6 +1150,7 @@ els.resetBtn.addEventListener("click", resetToLobby);
 els.addBotBtn.addEventListener("click", () => addBot(1));
 els.fillBotsBtn.addEventListener("click", fillBotsTo3);
 els.bidBtn.addEventListener("click", sendBid);
+els.leaveBtn.addEventListener("click", leaveRoom); // Klick-Event für den neuen Button
 els.nextRoundBtn.addEventListener("click", nextRound);
 document.querySelectorAll(".suitChoice").forEach(btn => {
   btn.addEventListener("click", () => chooseTrumpSuit(btn.dataset.suit));
