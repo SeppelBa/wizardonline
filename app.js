@@ -66,6 +66,18 @@ const els = {
   closeOverlayBtn: document.getElementById("closeOverlayBtn"),
   leaderboardList: document.getElementById("leaderboardList"),
   toastContainer: document.getElementById("toastContainer"),
+  // NEUE REGELELEMENTE UND STATISTIKEN
+  rulesBtn: document.getElementById("rulesBtn"),
+  rulesOverlay: document.getElementById("rulesOverlay"),
+  fastGameCheckbox: document.getElementById("fastGameCheckbox"),
+  closeRulesBtn: document.getElementById("closeRulesBtn"),
+  rulesHostHint: document.getElementById("rulesHostHint"),
+  statsOverlay: document.getElementById("statsOverlay"),
+  statsPlayerName: document.getElementById("statsPlayerName"),
+  statsGamesPlayed: document.getElementById("statsGamesPlayed"),
+  statsWins: document.getElementById("statsWins"),
+  statsWinRate: document.getElementById("statsWinRate"),
+  closeStatsBtn: document.getElementById("closeStatsBtn"),
 };
 
 const LOCAL = {
@@ -81,6 +93,7 @@ let roomUnsub = null;
 let roomCache = null;
 let overlayAlreadyShown = false;
 let currentSelectedBid = 0;
+let fastGameTimeout = null;
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js").catch(() => {});
@@ -228,7 +241,6 @@ function cardStrength(card, trumpSuit, ledSuit) {
   return v;
 }
 
-// FIX: Wenn die ALLERERSTE Karte im Stich ein Zauberer oder Narr ist, gibt es KEINE anzuspielende Farbe!
 function getLedSuit(trick) {
   if (!trick || trick.length === 0) return { wizardLed: false, ledSuit: null };
   
@@ -237,7 +249,6 @@ function getLedSuit(trick) {
     return { wizardLed: true, ledSuit: null };
   }
   if (firstPlay.card?.kind === "jester") {
-    // Falls die erste Karte ein Narr ist, entscheidet die nächste normale Karte die Farbe
     for (const play of trick) {
       if (play.card?.kind === "wizard") return { wizardLed: true, ledSuit: null };
       if (play.card?.kind === "card") return { wizardLed: false, ledSuit: play.card.suit };
@@ -325,20 +336,35 @@ function botTrumpChoice(room, playerId) {
   return Object.entries(tally).sort((a, b) => b[1] - a[1])[0][0];
 }
 
+// INTELLIGENZ-UPGRADE FÜR DIE BOTS: Wurf-Absicherung, um keine Karten mehr zu verschwenden
 function botChoosePlay(room, playerId) {
   const hand = handOf(room, playerId);
   const trick = currentTrick(room);
   const legal = legalCards(hand, trick, room.trumpSuit);
+  
+  const info = getLedSuit(trick);
   const sorted = legal.slice().sort((a, b) => {
-    const info = getLedSuit(trick);
-    const sa = cardStrength(a, room.trumpSuit, info.ledSuit);
-    const sb = cardStrength(b, room.trumpSuit, info.ledSuit);
-    return sa - sb;
+    return cardStrength(a, room.trumpSuit, info.ledSuit) - cardStrength(b, room.trumpSuit, info.ledSuit);
   });
+  
   const bid = room.bids?.[playerId] ?? 0;
   const taken = room.tricksTaken?.[playerId] ?? 0;
-  if (taken < bid) return sorted[sorted.length - 1];
-  return sorted[0];
+  
+  if (taken < bid) {
+    // Der Bot möchte den Stich. Kann er ihn mit irgendeiner legalen Karte überhaupt gewinnen?
+    const canWinWithAnyCard = legal.some(card => {
+      const simulatedTrick = [...trick, { playerId: "bot_check", card }];
+      return determineTrickWinner(simulatedTrick, room.trumpSuit) === "bot_check";
+    });
+    
+    if (canWinWithAnyCard) {
+      return sorted[sorted.length - 1]; // Ja! Spiele die stärkste Karte.
+    } else {
+      return sorted[0]; // Nein, der Stich ist uneinholbar weg. Wirf die schwächste Karte ab!
+    }
+  }
+  
+  return sorted[0]; // Will den Stich nicht. Spiele schwächste Karte.
 }
 
 function roundDealerIndex(room, roundNo) {
@@ -390,6 +416,45 @@ function buildRoundState(room, roundNo) {
   };
 }
 
+function roomStateOrDefault(roomCode, playerName, playerId) {
+  return {
+    roomCode,
+    createdAt: Date.now(),
+    hostId: playerId,
+    phase: "lobby",
+    roundNo: 0,
+    maxRound: 0,
+    dealerIndex: 0,
+    leaderIndex: 0,
+    turnIndex: 0,
+    bidStartIndex: 0,
+    currentBidOrderIndex: 0,
+    currentTrick: [],
+    trickCount: 0,
+    bids: {},
+    tricksTaken: {},
+    hands: {},
+    scoreHistory: [],
+    fastGame: false,
+    players: {
+      [playerId]: {
+        id: playerId,
+        name: playerName,
+        score: 0,
+        isBot: false,
+        seat: 0,
+        connected: true
+      }
+    },
+    order: [playerId],
+    trumpCard: null,
+    trumpSuit: null,
+    pendingTrumpChoiceSeat: null,
+    winnerId: null,
+    message: "Lobby erstellt."
+  };
+}
+
 function initializeGame(room) {
   const order = playerIds(room);
   const n = order.length;
@@ -409,16 +474,33 @@ function initializeGame(room) {
   return room;
 }
 
-async function saveGlobalWinnersToLeaderboard(room, topScore) {
+// ERWEITERTE STATISTIK-SPEICHERUNG: Trackt Wins und GamesPlayed für echte Menschen
+async function saveGlobalStatsToLeaderboard(room, topScore) {
   const order = playerIds(room);
   for (const id of order) {
     const p = room.players?.[id];
-    if (p && !p.isBot && (p.score || 0) === topScore) {
+    if (p && !p.isBot) {
       const cleanName = p.name.replace(/[.#$[\]]/g, "_"); 
       const userScoreRef = ref(db, `global_leaderboard/${cleanName}`);
+      const isWinner = (p.score || 0) === topScore;
+      
       try {
-        await runTransaction(userScoreRef, (currentWins) => {
-          return (currentWins || 0) + 1;
+        await runTransaction(userScoreRef, (current) => {
+          let wins = 0;
+          let gamesPlayed = 0;
+          
+          if (typeof current === "number") {
+            wins = current;
+            gamesPlayed = current; 
+          } else if (current && typeof current === "object") {
+            wins = current.wins || 0;
+            gamesPlayed = current.gamesPlayed || 0;
+          }
+          
+          return {
+            wins: isWinner ? wins + 1 : wins,
+            gamesPlayed: gamesPlayed + 1
+          };
         });
       } catch (e) {
         console.error("Fehler beim Bestenlisten-Update:", e);
@@ -458,7 +540,7 @@ function finishRoundAndMaybeNext(room) {
     room.turnIndex = null;
     
     if (winner) {
-      saveGlobalWinnersToLeaderboard(room, winner.score || 0);
+      saveGlobalStatsToLeaderboard(room, winner.score || 0);
     }
     return room;
   }
@@ -471,6 +553,19 @@ function finishRoundAndMaybeNext(room) {
 function allBidsPlaced(room) {
   const order = playerIds(room);
   return order.every(id => room.bids && room.bids[id] !== null && room.bids[id] !== undefined);
+}
+
+// DETAILS-FENSTER FÜR PROFIL-STATISTIKEN ÖFFNEN
+function showPlayerStatsModal(player) {
+  if (!els.statsOverlay) return;
+  els.statsPlayerName.textContent = `📊 ${player.name}`;
+  const gp = player.gamesPlayed || player.wins || 1;
+  els.statsGamesPlayed.textContent = gp;
+  els.statsWins.textContent = `${player.wins} 🏆`;
+  
+  const rate = Math.round((player.wins / gp) * 100);
+  els.statsWinRate.textContent = `${rate}%`;
+  els.statsOverlay.classList.remove("hidden");
 }
 
 function validBidOptions(room, playerId) {
@@ -578,6 +673,15 @@ function renderRoom(state) {
   renderHand(state);
   renderScores(state);
 
+  // REGELN UND CHECKBOX SYNCHRONISIEREN
+  if (els.fastGameCheckbox) {
+    els.fastGameCheckbox.checked = !!state.fastGame;
+    els.fastGameCheckbox.disabled = !meIsHost;
+    if (els.rulesHostHint) {
+      els.rulesHostHint.style.display = meIsHost ? "none" : "block";
+    }
+  }
+
   els.startBtn.disabled = !(meIsHost && state.phase === "lobby" && order.length >= 3 && order.length <= MAX_PLAYERS);
   els.resetBtn.disabled = !meIsHost && state.phase !== "lobby";
   els.addBotBtn.disabled = !(meIsHost && state.phase === "lobby");
@@ -630,7 +734,17 @@ function renderRoom(state) {
   const isSummary = state.phase === "round_summary";
   const isFinished = state.phase === "finished";
   
-  if (isSummary || isFinished) {
+  // AUTOMATISCHES SCHNELLES SPIEL: Host schaltet nach 4 Sek automatisch weiter
+  if (isSummary && state.fastGame) {
+    hideRoundOverlay();
+    if (meIsHost && !fastGameTimeout) {
+      fastGameTimeout = window.setTimeout(async () => {
+        fastGameTimeout = null;
+        await nextRound();
+      }, 4000);
+    }
+  } else if (isSummary || isFinished) {
+    if (fastGameTimeout) { clearTimeout(fastGameTimeout); fastGameTimeout = null; }
     if (!overlayAlreadyShown) {
       overlayAlreadyShown = true;
       setTimeout(() => {
@@ -640,6 +754,7 @@ function renderRoom(state) {
       }, 500);
     }
   } else {
+    if (fastGameTimeout) { clearTimeout(fastGameTimeout); fastGameTimeout = null; }
     overlayAlreadyShown = false;
     hideRoundOverlay();
   }
@@ -875,7 +990,7 @@ function showRoundOverlay(state) {
     .map(id => {
       const p = state.players[id];
       const bid = state.bids?.[id] ?? 0;
-      const took = state.tricksTaken?.[id] ?? 0;
+      const took = state.tricksTaken?.[id] || 0;
       const correct = bid === took;
 
       return {
@@ -924,6 +1039,7 @@ function hideRoundOverlay() {
   els.roundOverlay.classList.add("hidden");
 }
 
+// ERWEITERTE BESTENLISTE: Lädt Daten und macht Zeilen anklickbar
 async function fetchGlobalLeaderboard() {
   if (!els.leaderboardList) return;
   
@@ -938,8 +1054,20 @@ async function fetchGlobalLeaderboard() {
     }
 
     const data = snapshot.val();
-    const sortedEntries = Object.entries(data)
-      .map(([name, wins]) => ({ name, wins: Number(wins) }))
+    const parsedEntries = Object.entries(data).map(([name, val]) => {
+      let wins = 0;
+      let gamesPlayed = 0;
+      if (typeof val === "number") {
+        wins = val;
+        gamesPlayed = val; 
+      } else if (val && typeof val === "object") {
+        wins = Number(val.wins || 0);
+        gamesPlayed = Number(val.gamesPlayed || 0);
+      }
+      return { name, wins, gamesPlayed };
+    });
+
+    const sortedEntries = parsedEntries
       .sort((a, b) => b.wins - a.wins)
       .slice(0, 10);
 
@@ -948,57 +1076,23 @@ async function fetchGlobalLeaderboard() {
       row.className = "leaderboardRow";
       row.style.display = "flex";
       row.style.justifyContent = "space-between";
-      row.style.padding = "6px 8px";
+      row.style.padding = "8px";
       row.style.fontSize = "0.85rem";
       row.style.borderBottom = "1px solid rgba(255,255,255,0.03)";
+      row.style.cursor = "pointer";
+      row.style.borderRadius = "4px";
 
       row.innerHTML = `
         <span>#${idx + 1} <strong>${escapeHtml(player.name)}</strong></span>
         <strong style="color: #ca8a04;">🏆 ${player.wins} ${player.wins === 1 ? 'Sieg' : 'Siege'}</strong>
       `;
+      
+      row.addEventListener("click", () => showPlayerStatsModal(player));
       els.leaderboardList.appendChild(row);
     });
   } catch (e) {
     console.error("Fehler beim Abrufen der Bestenliste:", e);
   }
-}
-
-function roomStateOrDefault(roomCode, playerName, playerId) {
-  return {
-    roomCode,
-    createdAt: Date.now(),
-    hostId: playerId,
-    phase: "lobby",
-    roundNo: 0,
-    maxRound: 0,
-    dealerIndex: 0,
-    leaderIndex: 0,
-    turnIndex: 0,
-    bidStartIndex: 0,
-    currentBidOrderIndex: 0,
-    currentTrick: [],
-    trickCount: 0,
-    bids: {},
-    tricksTaken: {},
-    hands: {},
-    scoreHistory: [],
-    players: {
-      [playerId]: {
-        id: playerId,
-        name: playerName,
-        score: 0,
-        isBot: false,
-        seat: 0,
-        connected: true
-      }
-    },
-    order: [playerId],
-    trumpCard: null,
-    trumpSuit: null,
-    pendingTrumpChoiceSeat: null,
-    winnerId: null,
-    message: "Lobby erstellt."
-  };
 }
 
 async function joinOrCreateRoom(isCreate = false) {
@@ -1054,7 +1148,7 @@ async function joinOrCreateRoom(isCreate = false) {
     }
 
     if (!alreadyPlayer) {
-      room.spectators[currentPlayerId] = { id: playerId, name, joinedAt: Date.now() };
+      room.spectators[currentPlayerId] = { id: currentPlayerId, name, joinedAt: Date.now() };
       room.message = `${name} ist als Zuschauer beigetreten.`;
       return room;
     }
@@ -1467,6 +1561,23 @@ els.bidPlusBtn.addEventListener("click", () => {
     updateBidDisplay();
   }
 });
+
+// LISTENERS FÜR REGELEXTRA UND STATISTIKEN
+if (els.rulesBtn) {
+  els.rulesBtn.addEventListener("click", () => els.rulesOverlay.classList.remove("hidden"));
+}
+if (els.closeRulesBtn) {
+  els.closeRulesBtn.addEventListener("click", () => els.rulesOverlay.classList.add("hidden"));
+}
+if (els.closeStatsBtn) {
+  els.closeStatsBtn.addEventListener("click", () => els.statsOverlay.classList.add("hidden"));
+}
+if (els.fastGameCheckbox) {
+  els.fastGameCheckbox.addEventListener("change", async () => {
+    if (!roomCache || roomCache.hostId !== currentPlayerId) return;
+    await update(roomRef(currentRoomCode), { fastGame: els.fastGameCheckbox.checked });
+  });
+}
 
 els.joinBtn.addEventListener("click", () => joinOrCreateRoom(false));
 els.createBtn.addEventListener("click", () => {
