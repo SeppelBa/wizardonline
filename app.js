@@ -15,6 +15,7 @@ const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
 const MAX_PLAYERS = 6;
+const MIN_PLAYERS = 2; // Geändert von 3 auf 2
 const SUITS = [
   { key: "hearts", label: "Herz", short: "♥", css: "red" },
   { key: "spades", label: "Pik", short: "♠", css: "black" },
@@ -383,7 +384,8 @@ function initializeGame(room) {
   const order = playerIds(room);
   const n = order.length;
   room.roundNo = 1;
-  room.maxRound = Math.floor(60 / n);
+  // Limitierung für 2 Spieler auf maximal 20 Runden angepasst (60 Karten / 2 Spieler = 30, aber offiziell 20 Runden Limit bei 2 Personen)
+  room.maxRound = n === 2 ? 20 : Math.floor(60 / n);
   room.dealerIndex = 0;
   room.hostId = room.hostId || order[0];
   room.players = room.players || {};
@@ -558,7 +560,8 @@ function renderRoom(state) {
   renderHand(state);
   renderScores(state);
 
-  els.startBtn.disabled = !(meIsHost && state.phase === "lobby" && order.length >= 3 && order.length <= MAX_PLAYERS);
+  // Validierung auf MIN_PLAYERS (2) herabgesenkt
+  els.startBtn.disabled = !(meIsHost && state.phase === "lobby" && order.length >= MIN_PLAYERS && order.length <= MAX_PLAYERS);
   els.resetBtn.disabled = !meIsHost && state.phase !== "lobby";
   els.addBotBtn.disabled = !(meIsHost && state.phase === "lobby");
   els.fillBotsBtn.disabled = !(meIsHost && state.phase === "lobby");
@@ -1104,7 +1107,7 @@ async function startGame() {
   await runTransaction(roomReference, room => {
     if (!room) return room;
     const order = playerIds(room);
-    if (order.length < 3 || order.length > MAX_PLAYERS) return room;
+    if (order.length < MIN_PLAYERS || order.length > MAX_PLAYERS) return room;
     if (room.phase !== "lobby") return room;
     return initializeGame(room);
   });
@@ -1164,6 +1167,7 @@ async function addBot(count = 1) {
 
 async function fillBotsTo3() {
   if (!roomCache || roomCache.hostId !== currentPlayerId || roomCache.phase !== "lobby") return;
+  // Füllt auf 3 Spieler auf, falls weniger da sind. Wenn schon 2-3 da sind, passiert nichts.
   const missing = Math.max(0, 3 - playerIds(roomCache).length);
   await addBot(Math.min(missing, MAX_PLAYERS - playerIds(roomCache).length));
 }
