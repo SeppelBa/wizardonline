@@ -860,3 +860,5 @@ button:disabled{
 .card.special-cloud { background: linear-gradient(135deg, #0369a1 0%, #0c4a6e 100%) !important; border-color: #38bdf8 !important; color: #e0f2fe !important; }
 .card.special-juggler { background: linear-gradient(135deg, #6d28d9 0%, #4c1d95 100%) !important; border-color: #a78bfa !important; color: #f5f3ff !important; }
 .card.special-shapeshifter { background: linear-gradient(135deg, #115e59 0%, #134e4a 100%) !important; border-color: #2dd4bf !important; color: #ccfbf1 !important; }
+.card.special-witch { background: linear-gradient(135deg, #4c1d95 0%, #2e1065 100%) !important; border-color: #8b5cf6 !important; color: #ddd6fe !important; }
+.card.special-vampire { background: linear-gradient(135deg, #991b1b 0%, #450a0a 100%) !important; border-color: #f87171 !important; color: #fecaca !important; }
