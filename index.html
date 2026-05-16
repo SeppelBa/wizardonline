@@ -13,10 +13,8 @@
 
   <link rel="manifest" href="manifest.json">
   
-  <!-- Standard Icon für Browser-Tabs -->
   <link rel="icon" type="image/png" href="./icon.png">
 
-  <!-- Spezielles Icon für iPhones, wenn man die App auf den Homescreen legt -->
   <link rel="apple-touch-icon" href="./icon.png">
 
   <link rel="stylesheet" href="style.css" />
@@ -24,16 +22,13 @@
 
 <body>
 
-  <!-- BACKGROUND FX -->
   <div class="bgGlow bgGlow1"></div>
   <div class="bgGlow bgGlow2"></div>
 
-  <!-- TOAST NOTIFICATIONS (Hier fliegen die Stich-Meldungen rein) -->
   <div id="toastContainer" class="toast-container"></div>
 
   <div class="app">
 
-    <!-- HEADER -->
     <header class="topbar">
 
       <div>
@@ -49,7 +44,6 @@
 
     </header>
 
-    <!-- JOIN -->
     <section id="joinView" class="panel joinPanel">
 
       <div class="joinHero">
@@ -59,7 +53,6 @@
         </p>
       </div>
 
-      <!-- BESTENLISTE -->
       <div class="leaderboardBox">
 
         <div class="leaderboardHead">
@@ -75,7 +68,6 @@
 
       </div>
 
-      <!-- JOIN FORM -->
       <div class="joinGrid">
 
         <label class="inputWrap">
@@ -116,10 +108,8 @@
 
     </section>
 
-    <!-- GAME -->
     <section id="gameView" class="hidden">
 
-      <!-- STATUS -->
       <section class="panel statusPanel">
 
         <div class="statusGrid">
@@ -158,10 +148,8 @@
 
       </section>
 
-      <!-- MAIN -->
       <div class="layout">
 
-        <!-- PLAYERS -->
         <section class="panel">
 
           <div class="panelTop">
@@ -207,7 +195,6 @@
 
         </section>
 
-        <!-- INFO -->
         <section class="panel">
 
           <div class="panelTop">
@@ -218,32 +205,30 @@
             Warten auf Spiel...
           </div>
 
-          <!-- BIDS INPUT -->
           <div
             id="bidControls"
-            class="controls hidden"
+            class="hidden"
+            style="width: 100%; margin: 15px 0;"
           >
+            <div style="display: flex; flex-direction: column; gap: 10px; align-items: center; width: 100%;">
+              <div style="display: flex; align-items: center; justify-content: center; gap: 15px; width: 100%; max-width: 200px;">
+                <button id="bidMinusBtn" type="button" class="secondary" style="font-size: 1.2rem; padding: 10px 20px; flex: 1; border-radius: 8px; -webkit-user-select: none; user-select: none;">▼</button>
+                <div id="bidDisplay" style="font-size: 1.8rem; font-weight: bold; min-width: 40px; text-align: center; color: #fff; -webkit-user-select: none; user-select: none;">0</div>
+                <button id="bidPlusBtn" type="button" class="secondary" style="font-size: 1.2rem; padding: 10px 20px; flex: 1; border-radius: 8px; -webkit-user-select: none; user-select: none;">▲</button>
+              </div>
 
-            <input
-              id="bidInput"
-              type="number"
-              min="0"
-              step="1"
-              placeholder="Ansage"
-            />
-
-            <button id="bidBtn">
-              Ansagen
-            </button>
-
+              <button id="bidBtn" type="button" style="width: 100%; max-width: 200px; padding: 12px; border-radius: 8px; font-weight: bold;">
+                Ansage bestätigen
+              </button>
+            </div>
           </div>
 
           <div
             id="bidHint"
             class="hint"
+            style="text-align: center; margin-top: 4px; font-size: 0.85rem; color: var(--text-muted);"
           ></div>
 
-          <!-- TRUMP CHOICE -->
           <div
             id="trumpChoiceControls"
             class="hidden trumpBox"
@@ -287,12 +272,10 @@
 
           </div>
 
-          <!-- BIDS LIST -->
           <div id="bidsList" class="list"></div>
 
         </section>
 
-        <!-- PLAY AREA -->
         <section class="panel playArea">
 
           <div class="panelTop">
@@ -310,7 +293,6 @@
 
         </section>
 
-        <!-- SCORE -->
         <section class="panel">
 
           <div class="panelTop">
@@ -335,7 +317,6 @@
 
       </div>
 
-      <!-- HAND -->
       <section class="handWrap">
 
         <div class="handTop">
@@ -358,7 +339,6 @@
 
   </div>
 
-  <!-- ROUND OVERLAY -->
   <div
     id="roundOverlay"
     class="roundOverlay hidden"
@@ -375,7 +355,6 @@
         class="roundResults"
       ></div>
 
-      <!-- Schließen-Button, damit man das Spielfeld wieder sehen kann -->
       <button id="closeOverlayBtn" class="secondary" style="margin-top: 15px; width: 100%;">
         Ergebnisse schließen
       </button>
