@@ -2,129 +2,393 @@
 <html lang="de">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
-  <meta name="theme-color" content="#1a1026" />
+  <meta
+    name="viewport"
+    content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"
+  />
+
+  <meta name="theme-color" content="#0b1020" />
+
   <title>Wizard Online</title>
+
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icon.svg">
   <link rel="apple-touch-icon" href="icon.svg">
+
   <link rel="stylesheet" href="style.css" />
 </head>
+
 <body>
+
+  <!-- BACKGROUND FX -->
+  <div class="bgGlow bgGlow1"></div>
+  <div class="bgGlow bgGlow2"></div>
+
   <div class="app">
+
+    <!-- HEADER -->
     <header class="topbar">
+
       <div>
-        <div class="eyebrow">Kostenlos · Handy · Freunde</div>
-        <h1>Wizard Online</h1>
+        <div class="eyebrow">Realtime · Multiplayer · Wizard</div>
+        <h1>🪄 Wizard Online</h1>
       </div>
+
       <div class="top-actions">
         <button id="shareBtn" class="ghost">Teilen</button>
-        <button id="copyRoomBtn" class="ghost">Code kopieren</button>
+        <button id="copyRoomBtn" class="ghost">Code</button>
         <button id="leaveBtn" class="danger hidden">Verlassen</button>
       </div>
+
     </header>
 
-    <section id="joinView" class="panel">
-      <h2>Raum beitreten</h2>
-      <div class="grid2">
-        <label>
-          Name
-          <input id="nameInput" maxlength="20" placeholder="Dein Name" />
-        </label>
-        <label>
-          Raumcode
-          <input id="roomInput" maxlength="8" placeholder="z. B. AB12CD" />
-        </label>
-      </div>
-      <div class="row">
-        <button id="joinBtn">Raum betreten</button>
-        <button id="createBtn" class="secondary">Neuen Raum erstellen</button>
-      </div>
-      <p class="hint">
-        3–6 Spieler. Einer öffnet den Raum, die anderen geben denselben Code ein.
-      </p>
-    </section>
+    <!-- JOIN -->
+    <section id="joinView" class="panel joinPanel">
 
-    <section id="gameView" class="hidden">
-      <div class="status panel">
-        <div class="statusGrid">
-          <div><span>Raum</span><strong id="roomLabel">—</strong></div>
-          <div><span>Phase</span><strong id="phaseLabel">—</strong></div>
-          <div><span>Runde</span><strong id="roundLabel">—</strong></div>
-          <div><span>Trumpf</span><strong id="trumpLabel">—</strong></div>
-          <div><span>Am Zug</span><strong id="turnLabel">—</strong></div>
-          <div><span>Geber</span><strong id="dealerLabel">—</strong></div>
+      <div class="joinHero">
+        <h2>Spiele Wizard mit Freunden</h2>
+        <p>
+          Kostenlos • Browser • Handy optimiert
+        </p>
+      </div>
+
+      <!-- BESTENLISTE -->
+      <div class="leaderboardBox">
+
+        <div class="leaderboardHead">
+          <h3>🏆 Bestenliste</h3>
+          <span>Global</span>
         </div>
+
+        <div id="leaderboardList" class="leaderboardList">
+
+          <div class="leaderboardItem skeleton"></div>
+          <div class="leaderboardItem skeleton"></div>
+          <div class="leaderboardItem skeleton"></div>
+
+        </div>
+
       </div>
 
-      <div class="layout">
-        <section class="panel">
-          <div class="panelHead">
-            <h2>Spieler & Punkte</h2>
-            <div class="row">
-              <button id="addBotBtn" class="secondary">Bot hinzufügen</button>
-              <button id="fillBotsBtn" class="secondary">Bis 3 auffüllen</button>
-              <button id="startBtn">Spiel starten</button>
-              <button id="resetBtn" class="danger">Zur Lobby</button>
-            </div>
-          </div>
-          <div id="playersList" class="players"></div>
-        </section>
+      <!-- JOIN FORM -->
+      <div class="joinGrid">
 
-        <section class="panel">
-          <h2>Ansagen</h2>
-          <div id="biddingInfo" class="info"></div>
-          <div id="bidControls" class="controls hidden">
-            <input id="bidInput" type="number" min="0" step="1" placeholder="Ansage" />
-            <button id="bidBtn">Ansage senden</button>
-            <div class="hint" id="bidHint"></div>
-          </div>
-          <div id="trumpChoiceControls" class="controls hidden">
-            <p class="hint">Zauberer aufgedeckt – der Geber wählt die Trumpffarbe.</p>
-            <div class="row">
-              <button class="secondary suitChoice" data-suit="hearts">Herz</button>
-              <button class="secondary suitChoice" data-suit="spades">Pik</button>
-              <button class="secondary suitChoice" data-suit="clubs">Kreuz</button>
-              <button class="secondary suitChoice" data-suit="diamonds">Karo</button>
-            </div>
-          </div>
-          <div id="bidsList" class="list"></div>
-        </section>
+        <label class="inputWrap">
+          <span>Name</span>
+          <input
+            id="nameInput"
+            maxlength="20"
+            placeholder="Dein Name"
+            autocomplete="nickname"
+          />
+        </label>
 
-        <section class="panel">
-          <h2>Stich</h2>
-          <div id="trickInfo" class="info"></div>
-          <div id="trickTable" class="cards"></div>
-        </section>
+        <label class="inputWrap">
+          <span>Raumcode</span>
+          <input
+            id="roomInput"
+            maxlength="8"
+            placeholder="z. B. AB12CD"
+            autocapitalize="characters"
+          />
+        </label>
 
-        <section class="panel">
-          <h2>Deine Karten</h2>
-          <div id="hand" class="cards hand"></div>
-          <div id="handHint" class="hint"></div>
-        </section>
-
-        <section class="panel">
-          <h2>Punkte & Rundenende</h2>
-          <div id="scores"></div>
-          <div id="finishInfo" class="info"></div>
-          <button id="nextRoundBtn" class="secondary hidden">Nächste Runde</button>
-        </section>
       </div>
-    </section>
 
-    <section class="panel rules">
-      <h2>Regeln kurz</h2>
-      <p>
-        Wizard wird mit 60 Karten gespielt: 52 Farbkarten, 4 Zauberer, 4 Narren.
-        Jede Runde bekommt jeder Spieler genau so viele Karten wie die Rundennummer.
-        Vor dem Spielen sagt jeder voraus, wie viele Stiche er holt. Exakt richtig gibt Punkte,
-        daneben gibt Abzug. Zauberer gewinnen immer, Narren verlieren immer, außer es liegen nur Narren.
-        Wenn die erste nicht-narrische Karte eines Stichs eine Farbe vorgibt, musst du diese Farbe bedienen,
-        falls du sie noch hast.
+      <div class="joinActions">
+        <button id="joinBtn">
+          Raum betreten
+        </button>
+
+        <button id="createBtn" class="secondary">
+          Raum erstellen
+        </button>
+      </div>
+
+      <p class="hint center">
+        3–6 Spieler • Raumcode teilen • Direkt losspielen
       </p>
+
     </section>
+
+    <!-- GAME -->
+    <section id="gameView" class="hidden">
+
+      <!-- STATUS -->
+      <section class="panel statusPanel">
+
+        <div class="statusGrid">
+
+          <div>
+            <span>Raum</span>
+            <strong id="roomLabel">—</strong>
+          </div>
+
+          <div>
+            <span>Runde</span>
+            <strong id="roundLabel">—</strong>
+          </div>
+
+          <div>
+            <span>Trumpf</span>
+            <strong id="trumpLabel">—</strong>
+          </div>
+
+          <div>
+            <span>Phase</span>
+            <strong id="phaseLabel">—</strong>
+          </div>
+
+          <div>
+            <span>Am Zug</span>
+            <strong id="turnLabel">—</strong>
+          </div>
+
+          <div>
+            <span>Geber</span>
+            <strong id="dealerLabel">—</strong>
+          </div>
+
+        </div>
+
+      </section>
+
+      <!-- MAIN -->
+      <div class="layout">
+
+        <!-- PLAYERS -->
+        <section class="panel">
+
+          <div class="panelTop">
+
+            <h2>Spieler</h2>
+
+            <div class="miniActions">
+
+              <button
+                id="addBotBtn"
+                class="secondary"
+              >
+                + Bot
+              </button>
+
+              <button
+                id="fillBotsBtn"
+                class="secondary"
+              >
+                Bis 3
+              </button>
+
+            </div>
+
+          </div>
+
+          <div id="playersList" class="players"></div>
+
+          <div class="hostActions">
+
+            <button id="startBtn">
+              Spiel starten
+            </button>
+
+            <button
+              id="resetBtn"
+              class="danger"
+            >
+              Lobby
+            </button>
+
+          </div>
+
+        </section>
+
+        <!-- INFO -->
+        <section class="panel">
+
+          <div class="panelTop">
+            <h2>Spielstatus</h2>
+          </div>
+
+          <div id="biddingInfo" class="info">
+            Warten auf Spiel...
+          </div>
+
+          <!-- BIDS -->
+          <div
+            id="bidControls"
+            class="controls hidden"
+          >
+
+            <input
+              id="bidInput"
+              type="number"
+              min="0"
+              step="1"
+              placeholder="Ansage"
+            />
+
+            <button id="bidBtn">
+              Ansagen
+            </button>
+
+          </div>
+
+          <div
+            id="bidHint"
+            class="hint"
+          ></div>
+
+          <!-- TRUMP -->
+          <div
+            id="trumpChoiceControls"
+            class="hidden trumpBox"
+          >
+
+            <p class="hint">
+              Zauberer aufgedeckt — Trumpf wählen
+            </p>
+
+            <div class="trumpButtons">
+
+              <button
+                class="secondary suitChoice"
+                data-suit="hearts"
+              >
+                ♥
+              </button>
+
+              <button
+                class="secondary suitChoice"
+                data-suit="spades"
+              >
+                ♠
+              </button>
+
+              <button
+                class="secondary suitChoice"
+                data-suit="clubs"
+              >
+                ♣
+              </button>
+
+              <button
+                class="secondary suitChoice"
+                data-suit="diamonds"
+              >
+                ♦
+              </button>
+
+            </div>
+
+          </div>
+
+          <!-- BIDS -->
+          <div id="bidsList" class="list"></div>
+
+        </section>
+
+        <!-- PLAY AREA -->
+        <section class="panel playArea">
+
+          <div class="panelTop">
+            <h2>Stich</h2>
+
+            <div
+              id="trickInfo"
+              class="miniInfo"
+            >
+              —
+            </div>
+          </div>
+
+          <div id="trickTable"></div>
+
+        </section>
+
+        <!-- SCORE -->
+        <section class="panel">
+
+          <div class="panelTop">
+            <h2>Punkte</h2>
+          </div>
+
+          <div id="scores"></div>
+
+          <div
+            id="finishInfo"
+            class="finishInfo"
+          ></div>
+
+          <button
+            id="nextRoundBtn"
+            class="secondary hidden"
+          >
+            Neue Partie
+          </button>
+
+        </section>
+
+      </div>
+
+      <!-- HAND -->
+      <section class="handWrap">
+
+        <div class="handTop">
+          <h2>Deine Karten</h2>
+
+          <div
+            id="handHint"
+            class="hint"
+          ></div>
+        </div>
+
+        <div
+          id="hand"
+          class="cards hand"
+        ></div>
+
+      </section>
+
+    </section>
+
   </div>
 
-  <script type="module" src="app.js"></script>
+  <!-- ROUND OVERLAY -->
+  <div
+    id="roundOverlay"
+    class="roundOverlay hidden"
+  >
+
+    <div class="roundOverlayCard">
+
+      <div class="overlayGlow"></div>
+
+      <h2>✨ Runde beendet</h2>
+
+      <p id="roundWinnerText">
+        —
+      </p>
+
+      <div
+        id="roundResults"
+        class="roundResults"
+      ></div>
+
+      <div
+        id="overlayCountdown"
+        class="overlayCountdown"
+      >
+        Nächste Runde startet...
+      </div>
+
+    </div>
+
+  </div>
+
+  <script
+    type="module"
+    src="app.js"
+  ></script>
+
 </body>
 </html>
