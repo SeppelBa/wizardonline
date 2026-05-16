@@ -227,7 +227,6 @@ function getLedSuit(trick) {
   return { wizardLed: false, ledSuit: null };
 }
 
-// Ermittelt erlaubte Handkarten (Bedienzwang)
 function legalCards(hand, trick, trumpSuit) {
   if (!hand?.length) return [];
   const info = getLedSuit(trick);
@@ -407,7 +406,6 @@ function finishRoundAndMaybeNext(room) {
     return room;
   }
 
-  // FIX: Nicht sofort weiter, sondern Pause einlegen!
   room.phase = "round_summary";
   room.message = "Runde beendet! Der Host startet gleich die nächste Runde.";
   return room;
@@ -558,7 +556,6 @@ function renderRoom(state) {
     ? `Gewinner: ${state.winnerId ? playerName(state, state.winnerId) : "—"}`
     : "";
     
-  // AUTOMATISCHES ÖFFNEN DES OVERLAYS BEI PAUSE
   if (state.phase === "round_summary") {
     if (!overlayAlreadyShown) {
       overlayAlreadyShown = true;
@@ -566,14 +563,13 @@ function renderRoom(state) {
         if (roomCache && roomCache.phase === "round_summary") {
           showRoundOverlay(roomCache);
         }
-      }, 500); // 500ms Delay für besseres Feeling
+      }, 500);
     }
   } else {
     overlayAlreadyShown = false;
     hideRoundOverlay();
   }
 
-  // WEITER-BUTTON LOGIK
   const isSummary = state.phase === "round_summary";
   const isFinished = state.phase === "finished";
   
@@ -609,6 +605,28 @@ function renderTrick(state) {
 function renderHand(state) {
   els.hand.innerHTML = "";
   const hand = handOf(state, currentPlayerId);
+  
+  // TRUMPF-ANZEIGE DIREKT NEBEN "DEINE KARTEN" RENDERN
+  const handTitleEl = document.querySelector(".handTop h2");
+  if (handTitleEl) {
+    let trumpIndicator = "—";
+    let badgeClass = "";
+    if (state?.trumpCard) {
+      if (state.trumpCard.kind === "wizard") {
+        trumpIndicator = "🪄 Wahl";
+        badgeClass = "badge bot";
+      } else if (state.trumpCard.kind === "jester") {
+        trumpIndicator = "🎭 Kein";
+        badgeClass = "badge host";
+      } else {
+        const suit = SUIT_BY_KEY[state.trumpCard.suit];
+        trumpIndicator = `${suit?.short} ${suit?.label}`;
+        badgeClass = `badge ${suit?.css || ""}`;
+      }
+    }
+    handTitleEl.innerHTML = `Deine Karten <span class="${badgeClass}" style="margin-left: 8px; font-size: 0.8rem; padding: 3px 8px; vertical-align: middle;">Trumpf: ${trumpIndicator}</span>`;
+  }
+
   if (!hand.length) {
     els.hand.innerHTML = `<div class="hint">Keine Handkarten sichtbar.</div>`;
     return;
@@ -1152,7 +1170,6 @@ async function nextRound() {
   await runTransaction(roomReference, room => {
     if (!room) return room;
     
-    // Fall 1: Das komplette Spiel ist zu Ende -> Zurücksetzen in die Lobby
     if (room.phase === "finished") {
       room.phase = "lobby";
       room.roundNo = 0;
@@ -1173,7 +1190,6 @@ async function nextRound() {
       return room;
     }
     
-    // Fall 2: Nur die Runde ist vorbei -> Nächste Runde generieren
     if (room.phase === "round_summary") {
       const next = buildRoundState(room, room.roundNo + 1);
       Object.assign(room, next);
@@ -1186,6 +1202,10 @@ async function nextRound() {
 
 function maybeScheduleBot(state) {
   if (!state) return;
+  
+  // FIX: Wenn die Runde im Summary-Zustand pausiert, dürfen Bots NICHTS tun!
+  if (state.phase === "round_summary" || state.phase === "finished") return;
+
   const order = playerIds(state);
   const botId = currentTurnPlayerId(state);
 
@@ -1197,7 +1217,8 @@ function maybeScheduleBot(state) {
 
   window.setTimeout(async () => {
     const fresh = roomCache;
-    if (!fresh) return;
+    if (!fresh || fresh.phase === "round_summary" || fresh.phase === "finished") return;
+    
     const currentBotId = currentTurnPlayerId(fresh);
     if (!currentBotId || !isBot(fresh, currentBotId)) return;
 
