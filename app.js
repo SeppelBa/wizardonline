@@ -24,17 +24,6 @@ const SUITS = [
 const SUIT_BY_KEY = Object.fromEntries(SUITS.map(s => [s.key, s]));
 const BOT_NAMES = ["Merlin", "Gandalf", "Morgana", "HexerBot", "Rumpel", "Zaubix", "Arcana", "Fawkes", "Nexus", "Eldrin"];
 
-// JUBILÄUMS-SONDERKARTEN DEFINITIONEN
-const ANNIVERSARY_KINDS = {
-  DRAGON: "dragon",
-  PIXIE: "pixie",
-  BOMB: "bomb",
-  WEREWOLF: "werewolf",
-  JUGGLER: "juggler",
-  CLOUD: "cloud",
-  SHAPESHIFTER: "shapeshifter"
-};
-
 const els = {
   joinView: document.getElementById("joinView"),
   gameView: document.getElementById("gameView"),
@@ -77,18 +66,6 @@ const els = {
   closeOverlayBtn: document.getElementById("closeOverlayBtn"),
   leaderboardList: document.getElementById("leaderboardList"),
   toastContainer: document.getElementById("toastContainer"),
-  rulesBtn: document.getElementById("rulesBtn"),
-  rulesOverlay: document.getElementById("rulesOverlay"),
-  fastGameCheckbox: document.getElementById("fastGameCheckbox"),
-  anniversaryCheckbox: document.getElementById("anniversaryCheckbox"),
-  closeRulesBtn: document.getElementById("closeRulesBtn"),
-  rulesHostHint: document.getElementById("rulesHostHint"),
-  statsOverlay: document.getElementById("statsOverlay"),
-  statsPlayerName: document.getElementById("statsPlayerName"),
-  statsGamesPlayed: document.getElementById("statsGamesPlayed"),
-  statsWins: document.getElementById("statsWins"),
-  statsWinRate: document.getElementById("statsWinRate"),
-  closeStatsBtn: document.getElementById("closeStatsBtn"),
 };
 
 const LOCAL = {
@@ -103,8 +80,7 @@ let currentName = localStorage.getItem(LOCAL.playerName) || "";
 let roomUnsub = null;
 let roomCache = null;
 let overlayAlreadyShown = false;
-let currentSelectedBid = 0;
-let fastGameTimeout = null;
+let currentSelectedBid = 0; // Interner Zähler für das neue Klick-System
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js").catch(() => {});
@@ -149,7 +125,7 @@ function uid() {
 }
 
 function createDeck() {
-  let deck = [];
+  const deck = [];
   for (const suit of SUITS) {
     for (let rank = 1; rank <= 13; rank++) {
       deck.push({
@@ -165,18 +141,6 @@ function createDeck() {
     deck.push({ id: uid(), kind: "wizard", label: "Zauberer" });
     deck.push({ id: uid(), kind: "jester", label: "Narr" });
   }
-
-  // Wenn die Jubiläums-Option aktiv ist, die 7 Sonderkarten in den Stapel mischen
-  if (roomCache && roomCache.anniversaryCards) {
-    deck.push({ id: uid(), kind: ANNIVERSARY_KINDS.DRAGON, label: "Drache" });
-    deck.push({ id: uid(), kind: ANNIVERSARY_KINDS.PIXIE, label: "Fee" });
-    deck.push({ id: uid(), kind: ANNIVERSARY_KINDS.BOMB, label: "Bombe" });
-    deck.push({ id: uid(), kind: ANNIVERSARY_KINDS.WEREWOLF, label: "Werwolf" });
-    deck.push({ id: uid(), kind: ANNIVERSARY_KINDS.JUGGLER, label: "Jongleur", rank: 7.5 });
-    deck.push({ id: uid(), kind: ANNIVERSARY_KINDS.CLOUD, label: "Wolke", rank: 9.75 });
-    deck.push({ id: uid(), kind: ANNIVERSARY_KINDS.SHAPESHIFTER, label: "Gestaltenwandler" });
-  }
-
   return shuffle(deck);
 }
 
@@ -229,6 +193,7 @@ function trickCount(room) {
   return room.trickCount || 0;
 }
 
+// Steuerung der Klick-Pfeile im UI
 function updateBidDisplay() {
   if (els.bidDisplay) {
     els.bidDisplay.textContent = currentSelectedBid;
@@ -249,13 +214,6 @@ function isBot(room, playerId) {
 
 function cardLabel(card) {
   if (!card) return "—";
-  if (card.kind === ANNIVERSARY_KINDS.DRAGON) return "🐉 Drache";
-  if (card.kind === ANNIVERSARY_KINDS.PIXIE) return "🧚 Fee";
-  if (card.kind === ANNIVERSARY_KINDS.BOMB) return "💣 Bombe";
-  if (card.kind === ANNIVERSARY_KINDS.WEREWOLF) return "🐺 Werwolf";
-  if (card.kind === ANNIVERSARY_KINDS.JUGGLER) return `🤹 Jongleur (${card.suit ? SUIT_BY_KEY[card.suit]?.short : '?'})`;
-  if (card.kind === ANNIVERSARY_KINDS.CLOUD) return `☁️ Wolke (${card.suit ? SUIT_BY_KEY[card.suit]?.short : '?'})`;
-  if (card.kind === ANNIVERSARY_KINDS.SHAPESHIFTER) return `🧬 Gestaltenw. (${card.currentRole === 'wizard' ? 'Zauberer' : 'Narr'})`;
   if (card.kind === "wizard") return "Zauberer";
   if (card.kind === "jester") return "Narr";
   const suit = SUIT_BY_KEY[card.suit];
@@ -263,32 +221,20 @@ function cardLabel(card) {
 }
 
 function cardStrength(card, trumpSuit, ledSuit) {
-  if (card.kind === ANNIVERSARY_KINDS.DRAGON) return 2000;
-  if (card.kind === "wizard" || (card.kind === ANNIVERSARY_KINDS.SHAPESHIFTER && card.currentRole === "wizard")) return 1000;
-  if (card.kind === "jester" || (card.kind === ANNIVERSARY_KINDS.SHAPESHIFTER && card.currentRole === "jester") || card.kind === ANNIVERSARY_KINDS.BOMB) return -1000;
-  if (card.kind === ANNIVERSARY_KINDS.PIXIE) return -2000;
-  let v = card.rank || 0;
+  if (card.kind === "wizard") return 1000;
+  if (card.kind === "jester") return -1000;
+  let v = card.rank;
   if (trumpSuit && card.suit === trumpSuit) v += 100;
   else if (ledSuit && card.suit === ledSuit) v += 50;
   return v;
 }
 
 function getLedSuit(trick) {
-  if (!trick || trick.length === 0) return { wizardLed: false, ledSuit: null };
-  
-  const firstPlay = trick[0];
-  if (firstPlay.card?.kind === ANNIVERSARY_KINDS.DRAGON || firstPlay.card?.kind === "wizard" || (firstPlay.card?.kind === ANNIVERSARY_KINDS.SHAPESHIFTER && firstPlay.card.currentRole === "wizard")) {
-    return { wizardLed: true, ledSuit: null };
+  for (const play of trick || []) {
+    if (play.card?.kind === "wizard") return { wizardLed: true, ledSuit: null };
+    if (play.card?.kind === "card") return { wizardLed: false, ledSuit: play.card.suit };
   }
-  if (firstPlay.card?.kind === ANNIVERSARY_KINDS.PIXIE || firstPlay.card?.kind === ANNIVERSARY_KINDS.BOMB || firstPlay.card?.kind === "jester" || (firstPlay.card?.kind === ANNIVERSARY_KINDS.SHAPESHIFTER && firstPlay.card.currentRole === "jester")) {
-    for (const play of trick) {
-      if (play.card?.kind === "wizard" || play.card?.kind === ANNIVERSARY_KINDS.DRAGON || (play.card?.kind === ANNIVERSARY_KINDS.SHAPESHIFTER && play.card.currentRole === "wizard")) return { wizardLed: true, ledSuit: null };
-      if (play.card?.suit) return { wizardLed: false, ledSuit: play.card.suit };
-    }
-    return { wizardLed: false, ledSuit: null };
-  }
-  
-  return { wizardLed: false, ledSuit: firstPlay.card?.suit || null };
+  return { wizardLed: false, ledSuit: null };
 }
 
 function legalCards(hand, trick, trumpSuit) {
@@ -297,7 +243,7 @@ function legalCards(hand, trick, trumpSuit) {
   if (info.wizardLed || !info.ledSuit) return hand.slice();
   const hasSuit = hand.some(c => c.kind === "card" && c.suit === info.ledSuit);
   if (!hasSuit) return hand.slice();
-  return hand.filter(c => c.kind !== "card" || c.suit === info.ledSuit || ["dragon", "pixie", "bomb", "werewolf", "juggler", "cloud", "shapeshifter"].includes(c.kind));
+  return hand.filter(c => c.kind !== "card" || c.suit === info.ledSuit);
 }
 
 function isLegalPlay(card, hand, trick, trumpSuit) {
@@ -306,48 +252,40 @@ function isLegalPlay(card, hand, trick, trumpSuit) {
 
 function determineTrickWinner(trick, trumpSuit) {
   if (!trick?.length) return null;
-  
-  // 1. Bombe prüfen
-  const hasBomb = trick.some(play => play.card.kind === ANNIVERSARY_KINDS.BOMB);
-  if (hasBomb) return "bomb_exploded";
-
-  // 2. Drache & Fee Allianz prüfen
-  const hasDragon = trick.find(play => play.card.kind === ANNIVERSARY_KINDS.DRAGON);
-  const hasPixie = trick.find(play => play.card.kind === ANNIVERSARY_KINDS.PIXIE);
-  if (hasDragon && hasPixie) return hasPixie.playerId;
-  if (hasDragon) return hasDragon.playerId;
-
-  // 3. Zauberer oder Gestaltenwandler-Zauberer prüfen
-  const firstWizard = trick.find(play => play.card.kind === "wizard" || (play.card.kind === ANNIVERSARY_KINDS.SHAPESHIFTER && play.card.currentRole === "wizard"));
+  const firstWizard = trick.find(play => play.card.kind === "wizard");
   if (firstWizard) return firstWizard.playerId;
 
-  // 4. Nur Narren/Fees im Stich?
-  const allJesters = trick.every(play => play.card.kind === "jester" || play.card.kind === ANNIVERSARY_KINDS.PIXIE || (play.card.kind === ANNIVERSARY_KINDS.SHAPESHIFTER && play.card.currentRole === "jester"));
+  const allJesters = trick.every(play => play.card.kind === "jester");
   if (allJesters) return trick[0].playerId;
 
-  // 5. Reguläre Auswertung nach mathematischer Stärke (inkl. Jongleur & Wolke)
-  const info = getLedSuit(trick);
-  const ledSuit = info.ledSuit;
-  const trumpPlays = trumpSuit ? trick.filter(play => play.card.kind === "card" && play.card.suit === trumpSuit) : [];
-  const candidates = trumpPlays.length ? trumpPlays : trick.filter(play => (play.card.kind === "card" || play.card.kind === ANNIVERSARY_KINDS.JUGGLER || play.card.kind === ANNIVERSARY_KINDS.CLOUD) && play.card.suit === ledSuit);
+  const led = trick.find(play => play.card.kind === "card");
+  const ledSuit = led?.card?.suit || null;
+
+  const trumpPlays = trumpSuit
+    ? trick.filter(play => play.card.kind === "card" && play.card.suit === trumpSuit)
+    : [];
+
+  const candidates = trumpPlays.length
+    ? trumpPlays
+    : trick.filter(play => play.card.kind === "card" && play.card.suit === ledSuit);
 
   if (!candidates.length) {
-    return trick.find(play => play.card.kind === "jester" || play.card.kind === ANNIVERSARY_KINDS.PIXIE)?.playerId || trick[0].playerId;
+    return trick.find(play => play.card.kind === "jester")?.playerId || trick[0].playerId;
   }
 
   return candidates.reduce((best, play) => {
     if (!best) return play;
-    return (cardStrength(play.card, trumpSuit, ledSuit) > cardStrength(best.card, trumpSuit, ledSuit)) ? play : best;
+    return (play.card.rank > best.card.rank) ? play : best;
   }, null).playerId;
 }
 
 function botStrengthForHand(hand, trumpSuit) {
   let score = 0;
   for (const card of hand) {
-    if (card.kind === "wizard" || card.kind === ANNIVERSARY_KINDS.DRAGON) score += 40;
-    else if (card.kind === "jester" || card.kind === ANNIVERSARY_KINDS.PIXIE || card.kind === ANNIVERSARY_KINDS.BOMB) score -= 6;
+    if (card.kind === "wizard") score += 40;
+    else if (card.kind === "jester") score -= 6;
     else {
-      score += card.rank || 5;
+      score += card.rank;
       if (trumpSuit && card.suit === trumpSuit) score += 10;
       if (card.rank >= 11) score += 4;
       if (card.rank >= 8) score += 2;
@@ -380,48 +318,15 @@ function botChoosePlay(room, playerId) {
   const hand = handOf(room, playerId);
   const trick = currentTrick(room);
   const legal = legalCards(hand, trick, room.trumpSuit);
-  
-  const wantTrick = (room.tricksTaken?.[playerId] ?? 0) < (room.bids?.[playerId] ?? 0);
-  
-  // MEGA-SCHLAUES BOT-GEHIRN FÜR JUBILÄUMSKARTEN
-  for (let card of legal) {
-    if (card.kind === ANNIVERSARY_KINDS.SHAPESHIFTER) {
-      card.currentRole = wantTrick ? "wizard" : "jester";
-      return card;
-    }
-    if (card.kind === ANNIVERSARY_KINDS.DRAGON && wantTrick && !trick.some(p => p.card.kind === ANNIVERSARY_KINDS.PIXIE)) {
-      return card;
-    }
-    if (card.kind === ANNIVERSARY_KINDS.PIXIE && trick.some(p => p.card.kind === ANNIVERSARY_KINDS.DRAGON)) {
-      return card;
-    }
-    if (card.kind === ANNIVERSARY_KINDS.BOMB && !wantTrick && trick.length > 0) {
-      return card;
-    }
-    if (card.kind === ANNIVERSARY_KINDS.JUGGLER || card.kind === ANNIVERSARY_KINDS.CLOUD) {
-      card.suit = room.trumpSuit || SUITS[0].key;
-      return card;
-    }
-  }
-  
-  const info = getLedSuit(trick);
   const sorted = legal.slice().sort((a, b) => {
-    return cardStrength(a, room.trumpSuit, info.ledSuit) - cardStrength(b, room.trumpSuit, info.ledSuit);
+    const info = getLedSuit(trick);
+    const sa = cardStrength(a, room.trumpSuit, info.ledSuit);
+    const sb = cardStrength(b, room.trumpSuit, info.ledSuit);
+    return sa - sb;
   });
-  
-  if (wantTrick) {
-    const canWinWithAnyCard = legal.some(card => {
-      const simulatedTrick = [...trick, { playerId: "bot_check", card }];
-      return determineTrickWinner(simulatedTrick, room.trumpSuit) === "bot_check";
-    });
-    
-    if (canWinWithAnyCard) {
-      return sorted[sorted.length - 1];
-    } else {
-      return sorted[0];
-    }
-  }
-  
+  const bid = room.bids?.[playerId] ?? 0;
+  const taken = room.tricksTaken?.[playerId] ?? 0;
+  if (taken < bid) return sorted[sorted.length - 1];
   return sorted[0];
 }
 
@@ -438,23 +343,11 @@ function buildRoundState(room, roundNo) {
   for (let i = 0; i < order.length; i++) {
     hands[order[i]] = deck.slice(i * size, (i + 1) * size);
   }
-  let trumpCard = deck[order.length * size] || null;
+  const trumpCard = deck[order.length * size] || null;
   const dealerIndex = roundDealerIndex(room, roundNo);
   const leaderIndex = (dealerIndex + 1) % order.length;
   const phase = trumpCard?.kind === "wizard" ? "choose_trump" : "bidding";
   const trumpSuit = trumpCard?.kind === "card" ? trumpCard.suit : null;
-
-  // WERWOLF EFFEKT: Automatischer Tausch gegen die aufgedeckte Trumpfkarte
-  if (room.anniversaryCards) {
-    for (const id of order) {
-      const wolfIdx = hands[id].findIndex(c => c.kind === ANNIVERSARY_KINDS.WEREWOLF);
-      if (wolfIdx !== -1 && trumpCard) {
-        const oldTrump = trumpCard;
-        trumpCard = hands[id][wolfIdx];
-        hands[id][wolfIdx] = oldTrump;
-      }
-    }
-  }
 
   const tricksTaken = {};
   const bids = {};
@@ -486,46 +379,6 @@ function buildRoundState(room, roundNo) {
   };
 }
 
-function roomStateOrDefault(roomCode, playerName, playerId) {
-  return {
-    roomCode,
-    createdAt: Date.now(),
-    hostId: playerId,
-    phase: "lobby",
-    roundNo: 0,
-    maxRound: 0,
-    dealerIndex: 0,
-    leaderIndex: 0,
-    turnIndex: 0,
-    bidStartIndex: 0,
-    currentBidOrderIndex: 0,
-    currentTrick: [],
-    trickCount: 0,
-    bids: {},
-    tricksTaken: {},
-    hands: {},
-    scoreHistory: [],
-    fastGame: false,
-    anniversaryCards: false,
-    players: {
-      [playerId]: {
-        id: playerId,
-        name: playerName,
-        score: 0,
-        isBot: false,
-        seat: 0,
-        connected: true
-      }
-    },
-    order: [playerId],
-    trumpCard: null,
-    trumpSuit: null,
-    pendingTrumpChoiceSeat: null,
-    winnerId: null,
-    message: "Lobby erstellt."
-  };
-}
-
 function initializeGame(room) {
   const order = playerIds(room);
   const n = order.length;
@@ -545,39 +398,19 @@ function initializeGame(room) {
   return room;
 }
 
-async function saveGlobalStatsToLeaderboard(room, topScore) {
-  const order = playerIds(room);
-  for (const id of order) {
-    const p = room.players?.[id];
-    if (p && !p.isBot) {
-      const cleanName = p.name.replace(/[.#$[\]]/g, "_"); 
-      const userScoreRef = ref(db, `global_leaderboard/${cleanName}`);
-      const isWinner = (p.score || 0) === topScore;
-      
-      try {
-        await runTransaction(userScoreRef, (current) => {
-          let wins = 0;
-          let gamesPlayed = 0;
-          
-          if (typeof current === "number") {
-            wins = current;
-            gamesPlayed = current; 
-          } else if (current && typeof current === "object") {
-            wins = current.wins || 0;
-            gamesPlayed = current.gamesPlayed || 0;
-          }
-          
-          return {
-            wins: isWinner ? wins + 1 : wins,
-            gamesPlayed: gamesPlayed + 1
-          };
-        });
-      } catch (e) {
-        console.error("Fehler beim Bestenlisten-Update:", e);
-      }
-    }
+async function saveGlobalWinnerToLeaderboard(winnerName, winnerId) {
+  if (!winnerId || winnerId.startsWith("bot_")) return;
+  const cleanName = winnerName.replace(/[.#$[\]]/g, "_"); 
+  const userScoreRef = ref(db, `global_leaderboard/${cleanName}`);
+  
+  try {
+    await runTransaction(userScoreRef, (currentWins) => {
+      return (currentWins || 0) + 1;
+    });
+    fetchGlobalLeaderboard();
+  } catch (e) {
+    console.error("Fehler beim Bestenlisten-Update:", e);
   }
-  fetchGlobalLeaderboard();
 }
 
 function finishRoundAndMaybeNext(room) {
@@ -610,7 +443,7 @@ function finishRoundAndMaybeNext(room) {
     room.turnIndex = null;
     
     if (winner) {
-      saveGlobalStatsToLeaderboard(room, winner.score || 0);
+      saveGlobalWinnerToLeaderboard(winner.name, winner.id);
     }
     return room;
   }
@@ -623,18 +456,6 @@ function finishRoundAndMaybeNext(room) {
 function allBidsPlaced(room) {
   const order = playerIds(room);
   return order.every(id => room.bids && room.bids[id] !== null && room.bids[id] !== undefined);
-}
-
-function showPlayerStatsModal(player) {
-  if (!els.statsOverlay) return;
-  els.statsPlayerName.textContent = `📊 ${player.name}`;
-  const gp = player.gamesPlayed || player.wins || 1;
-  els.statsGamesPlayed.textContent = gp;
-  els.statsWins.textContent = `${player.wins} 🏆`;
-  
-  const rate = Math.round((player.wins / gp) * 100);
-  els.statsWinRate.textContent = `${rate}%`;
-  els.statsOverlay.classList.remove("hidden");
 }
 
 function validBidOptions(room, playerId) {
@@ -703,15 +524,10 @@ function nicePhase(phase) {
 }
 
 function renderTrump(state) {
-  if (state?.trumpSuit) {
-    const suit = SUIT_BY_KEY[state.trumpSuit];
-    return suit ? `${suit.short} ${suit.label}` : "—";
-  }
   if (!state?.trumpCard) return "—";
-  if (state.trumpCard.kind === "wizard") return "🪄 Wahl...";
-  if (state.trumpCard.kind === "jester") return "🎭 Kein";
-  const suit = SUIT_BY_KEY[state.trumpCard.suit];
-  return suit ? `${suit.short} ${suit.label}` : "—";
+  if (state.trumpCard.kind === "wizard") return "Wahl";
+  if (state.trumpCard.kind === "jester") return "Kein";
+  return SUIT_BY_KEY[state.trumpCard.suit]?.short || "—";
 }
 
 function renderRoom(state) {
@@ -742,19 +558,6 @@ function renderRoom(state) {
   renderHand(state);
   renderScores(state);
 
-  if (els.fastGameCheckbox) {
-    els.fastGameCheckbox.checked = !!state.fastGame;
-    els.fastGameCheckbox.disabled = !meIsHost;
-    if (els.rulesHostHint) {
-      els.rulesHostHint.style.display = meIsHost ? "none" : "block";
-    }
-  }
-
-  if (els.anniversaryCheckbox) {
-    els.anniversaryCheckbox.checked = !!state.anniversaryCards;
-    els.anniversaryCheckbox.disabled = !meIsHost;
-  }
-
   els.startBtn.disabled = !(meIsHost && state.phase === "lobby" && order.length >= 3 && order.length <= MAX_PLAYERS);
   els.resetBtn.disabled = !meIsHost && state.phase !== "lobby";
   els.addBotBtn.disabled = !(meIsHost && state.phase === "lobby");
@@ -768,6 +571,7 @@ function renderRoom(state) {
     const options = validBidOptions(state, currentPlayerId);
     els.bidHint.textContent = `Erlaubt: ${options.join(", ")}`;
     
+    // Zähler zurücksetzen falls er außerhalb der Optionen liegt
     if (currentSelectedBid > roundSize(state)) {
       currentSelectedBid = 0;
     }
@@ -804,36 +608,26 @@ function renderRoom(state) {
     ? `Gewinner: ${state.winnerId ? playerName(state, state.winnerId) : "—"}`
     : "";
     
-  const isSummary = state.phase === "round_summary";
-  const isFinished = state.phase === "finished";
-  
-  if (isSummary && state.fastGame) {
-    hideRoundOverlay();
-    if (meIsHost && !fastGameTimeout) {
-      fastGameTimeout = window.setTimeout(async () => {
-        fastGameTimeout = null;
-        await nextRound();
-      }, 1500);
-    }
-  } else if (isSummary || isFinished) {
-    if (fastGameTimeout) { clearTimeout(fastGameTimeout); fastGameTimeout = null; }
+  if (state.phase === "round_summary") {
     if (!overlayAlreadyShown) {
       overlayAlreadyShown = true;
       setTimeout(() => {
-        if (roomCache && (roomCache.phase === "round_summary" || roomCache.phase === "finished")) {
+        if (roomCache && roomCache.phase === "round_summary") {
           showRoundOverlay(roomCache);
         }
       }, 500);
     }
   } else {
-    if (fastGameTimeout) { clearTimeout(fastGameTimeout); fastGameTimeout = null; }
     overlayAlreadyShown = false;
     hideRoundOverlay();
   }
 
+  const isSummary = state.phase === "round_summary";
+  const isFinished = state.phase === "finished";
+  
   els.nextRoundBtn.classList.toggle("hidden", !(isSummary || isFinished));
   els.nextRoundBtn.disabled = !((isSummary || isFinished) && state.hostId === currentPlayerId);
-  els.nextRoundBtn.textContent = isSummary ? "Nächste Runde starten" : "Neues Spiel starten";
+  els.nextRoundBtn.textContent = isSummary ? "Nächste Runde starten" : "Neues Spiel";
 
   maybeScheduleBot(state);
 }
@@ -843,16 +637,9 @@ function renderBids(state) {
   const order = playerIds(state);
   order.forEach((id) => {
     const bid = state.bids?.[id];
-    const taken = state.tricksTaken?.[id] || 0;
     const row = document.createElement("div");
     row.className = "listItem";
-    
-    let displayValue = "—";
-    if (bid !== null && bid !== undefined) {
-      displayValue = `${bid} / ${taken} St.`;
-    }
-    
-    row.innerHTML = `<span>${escapeHtml(playerName(state, id))}</span><strong>${displayValue}</strong>`;
+    row.innerHTML = `<span>${escapeHtml(playerName(state, id))}</span><strong>${bid === null || bid === undefined ? "—" : bid}</strong>`;
     els.bidsList.appendChild(row);
   });
 }
@@ -875,16 +662,12 @@ function renderHand(state) {
   if (handTitleEl) {
     let trumpIndicator = "—";
     let badgeClass = "";
-    if (state?.trumpSuit) {
-      const suit = SUIT_BY_KEY[state.trumpSuit];
-      trumpIndicator = `${suit?.short} ${suit?.label}`;
-      badgeClass = `badge ${suit?.css || ""}`;
-    } else if (state?.trumpCard) {
+    if (state?.trumpCard) {
       if (state.trumpCard.kind === "wizard") {
-        trumpIndicator = "🪄 Wahl läuft...";
+        trumpIndicator = "🪄 Wahl";
         badgeClass = "badge bot";
       } else if (state.trumpCard.kind === "jester") {
-        trumpIndicator = "🎭 Kein Trumpf";
+        trumpIndicator = "🎭 Kein";
         badgeClass = "badge host";
       } else {
         const suit = SUIT_BY_KEY[state.trumpCard.suit];
@@ -999,37 +782,12 @@ function renderScores(state) {
 
 function makeCardElement(card, showPlayerTag = false, playerTag = "") {
   const el = document.createElement("div");
-  
-  let cls = "";
-  if (card.kind === "wizard") cls = "specialWizard";
-  else if (card.kind === "jester") cls = "specialJester";
-  else if (["dragon", "pixie", "bomb", "werewolf", "cloud", "juggler", "shapeshifter"].includes(card.kind)) {
-    cls = `special-${card.kind}`;
-  } else {
-    cls = SUIT_BY_KEY[card.suit]?.css || "";
-  }
+  const cls = card.kind === "wizard" ? "specialWizard" : card.kind === "jester" ? "specialJester" : SUIT_BY_KEY[card.suit]?.css || "";
   el.className = `card ${cls}`;
-  
-  const suit = SUIT_BY_KEY[card.suit];
-  let top = "";
-  let mid = "";
-  let bot = "";
-  
-  if (card.kind === "wizard") { top = "🪄"; mid = "Zauberer"; }
-  else if (card.kind === "jester") { top = "🎭"; mid = "Narr"; }
-  else if (card.kind === "dragon") { top = "🐉"; mid = "Drache"; }
-  else if (card.kind === "pixie") { top = "🧚"; mid = "Fee"; }
-  else if (card.kind === "bomb") { top = "💣"; mid = "Bombe"; }
-  else if (card.kind === "werewolf") { top = "🐺"; mid = "Werwolf"; }
-  else if (card.kind === "juggler") { top = "🤹"; mid = `Jongleur (${suit ? suit.short : '7.5'})`; bot = suit ? suit.label : ""; }
-  else if (card.kind === "cloud") { top = "☁️"; mid = `Wolke (${suit ? suit.short : '9.75'})`; bot = suit ? suit.label : ""; }
-  else if (card.kind === "shapeshifter") { top = "🧬"; mid = `Gestaltenw. (${card.currentRole === 'wizard' ? 'Z' : 'N'})`; }
-  else {
-    top = suit ? suit.short : "?";
-    mid = card.rank;
-    bot = suit ? suit.label : "";
-  }
-  
+  const suit = card.kind === "card" ? SUIT_BY_KEY[card.suit] : null;
+  const top = card.kind === "card" ? suit.short : card.kind === "wizard" ? "🪄" : "🎭";
+  const mid = card.kind === "card" ? card.rank : card.kind === "wizard" ? "Zauberer" : "Narr";
+  const bot = card.kind === "card" ? suit.label : "";
   el.innerHTML = `
     <div class="top"><span>${top}</span><span>${showPlayerTag && playerTag ? escapeHtml(playerTag) : ""}</span></div>
     <div class="mid">${escapeHtml(String(mid))}</div>
@@ -1068,26 +826,13 @@ function showRoundOverlay(state) {
   if (!state) return;
 
   els.roundResults.innerHTML = "";
-  
-  const isFinished = state.phase === "finished";
-  const titleEl = els.roundOverlay.querySelector("h2");
-  
-  if (isFinished) {
-    const winner = highestScoreWinner(state);
-    if (titleEl) {
-      titleEl.innerHTML = `👑 GESAMTSIEG! 👑<br><span style="font-size: 1.1rem; color: #eab308; display:block; margin-top:5px; font-weight:bold;">✨ ${escapeHtml(winner ? winner.name : '—')} gewinnt das Spiel! ✨</span>`;
-    }
-  } else {
-    if (titleEl) {
-      titleEl.innerHTML = `✨ Runde beendet`;
-    }
-  }
 
   const rows = playerIds(state)
     .map(id => {
       const p = state.players[id];
       const bid = state.bids?.[id] ?? 0;
-      const took = state.tricksTaken?.[id] || 0;
+      const took = state.tricksTaken?.[id] ?? 0;
+
       const correct = bid === took;
 
       return {
@@ -1102,23 +847,17 @@ function showRoundOverlay(state) {
 
   rows.forEach((r, index) => {
     const div = document.createElement("div");
-    
-    let rowClass = r.correct ? "success" : "fail";
-    if (isFinished) {
-      rowClass = index === 0 ? "success" : "";
-    }
-    
-    div.className = `roundPlayer ${rowClass}`;
+    div.className = `roundPlayer ${r.correct ? "success" : "fail"}`;
 
     div.innerHTML = `
-      <div class="roundRank">${isFinished && index === 0 ? "👑" : `#${index + 1}`}</div>
+      <div class="roundRank">#${index + 1}</div>
 
       <div class="roundName">
         ${escapeHtml(r.name)}
       </div>
 
       <div class="roundStats">
-        ${isFinished ? "Endstand der Partie" : `Ansage ${r.bid} · Stich ${r.took}`}
+        Ansage ${r.bid} · Stich ${r.took}
       </div>
 
       <div class="roundScore">
@@ -1150,20 +889,8 @@ async function fetchGlobalLeaderboard() {
     }
 
     const data = snapshot.val();
-    const parsedEntries = Object.entries(data).map(([name, val]) => {
-      let wins = 0;
-      let gamesPlayed = 0;
-      if (typeof val === "number") {
-        wins = val;
-        gamesPlayed = val; 
-      } else if (val && typeof val === "object") {
-        wins = Number(val.wins || 0);
-        gamesPlayed = Number(val.gamesPlayed || 0);
-      }
-      return { name, wins, gamesPlayed };
-    });
-
-    const sortedEntries = parsedEntries
+    const sortedEntries = Object.entries(data)
+      .map(([name, wins]) => ({ name, wins: Number(wins) }))
       .sort((a, b) => b.wins - a.wins)
       .slice(0, 10);
 
@@ -1172,23 +899,57 @@ async function fetchGlobalLeaderboard() {
       row.className = "leaderboardRow";
       row.style.display = "flex";
       row.style.justifyContent = "space-between";
-      row.style.padding = "8px";
+      row.style.padding = "6px 8px";
       row.style.fontSize = "0.85rem";
       row.style.borderBottom = "1px solid rgba(255,255,255,0.03)";
-      row.style.cursor = "pointer";
-      row.style.borderRadius = "4px";
 
       row.innerHTML = `
         <span>#${idx + 1} <strong>${escapeHtml(player.name)}</strong></span>
         <strong style="color: #ca8a04;">🏆 ${player.wins} ${player.wins === 1 ? 'Sieg' : 'Siege'}</strong>
       `;
-      
-      row.addEventListener("click", () => showPlayerStatsModal(player));
       els.leaderboardList.appendChild(row);
     });
   } catch (e) {
     console.error("Fehler beim Abrufen der Bestenliste:", e);
   }
+}
+
+function roomStateOrDefault(roomCode, playerName, playerId) {
+  return {
+    roomCode,
+    createdAt: Date.now(),
+    hostId: playerId,
+    phase: "lobby",
+    roundNo: 0,
+    maxRound: 0,
+    dealerIndex: 0,
+    leaderIndex: 0,
+    turnIndex: 0,
+    bidStartIndex: 0,
+    currentBidOrderIndex: 0,
+    currentTrick: [],
+    trickCount: 0,
+    bids: {},
+    tricksTaken: {},
+    hands: {},
+    scoreHistory: [],
+    players: {
+      [playerId]: {
+        id: playerId,
+        name: playerName,
+        score: 0,
+        isBot: false,
+        seat: 0,
+        connected: true
+      }
+    },
+    order: [playerId],
+    trumpCard: null,
+    trumpSuit: null,
+    pendingTrumpChoiceSeat: null,
+    winnerId: null,
+    message: "Lobby erstellt."
+  };
 }
 
 async function joinOrCreateRoom(isCreate = false) {
@@ -1244,7 +1005,7 @@ async function joinOrCreateRoom(isCreate = false) {
     }
 
     if (!alreadyPlayer) {
-      room.spectators[currentPlayerId] = { id: currentPlayerId, name, joinedAt: Date.now() };
+      room.spectators[currentPlayerId] = { id: playerId, name, joinedAt: Date.now() };
       room.message = `${name} ist als Zuschauer beigetreten.`;
       return room;
     }
@@ -1458,7 +1219,7 @@ async function sendBid() {
       return room;
     });
     
-    currentSelectedBid = 0;
+    currentSelectedBid = 0; // Nach Absenden für die nächste Runde resetten
 
   } catch (error) {
     alert("KRITISCHER FIREBASE FEHLER: " + error.message);
@@ -1478,11 +1239,6 @@ async function playCard(cardId) {
     if (!card) return room;
     if (!isLegalPlay(card, hand, room.currentTrick || [], room.trumpSuit)) return room;
 
-    // Automatisches Rollen-Zuweisen für flüssiges Gameplay
-    const wantTrick = (room.tricksTaken[currentPlayerId] || 0) < (room.bids[currentPlayerId] || 0);
-    if (card.kind === ANNIVERSARY_KINDS.SHAPESHIFTER) card.currentRole = wantTrick ? "wizard" : "jester";
-    if (card.kind === ANNIVERSARY_KINDS.JUGGLER || card.kind === ANNIVERSARY_KINDS.CLOUD) card.suit = room.trumpSuit || SUITS[0].key;
-
     room.hands[currentPlayerId] = hand.filter(c => c.id !== cardId);
     room.currentTrick = room.currentTrick || [];
     room.currentTrick.push({
@@ -1492,45 +1248,18 @@ async function playCard(cardId) {
 
     if (room.currentTrick.length >= order.length) {
       const winnerId = determineTrickWinner(room.currentTrick, room.trumpSuit);
-      
-      if (winnerId === "bomb_exploded") {
-        room.message = "💥 Eine Bombe ist explodiert! Stich wurde komplett vernichtet.";
-        setTimeout(() => { showToast("Bombe explodiert! Stich vernichtet."); }, 50);
-      } else {
-        room.tricksTaken[winnerId] = (room.tricksTaken[winnerId] || 0) + 1;
-        room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
-        setTimeout(() => { showToast(`${playerName(room, winnerId)} gewinnt den Stich`); }, 50);
-        
-        if (room.currentTrick.some(p => p.card.kind === ANNIVERSARY_KINDS.CLOUD)) {
-          room.cloudWinnerId = winnerId;
-        }
-      }
-
-      // JONGLEUR-EFFEKT: Handkarten im Uhrzeigersinn weitergeben
-      const hasJuggler = room.currentTrick.some(p => p.card.kind === ANNIVERSARY_KINDS.JUGGLER);
-      if (hasJuggler && room.trickCount + 1 < room.roundNo) {
-        let savedCards = {};
-        order.forEach((id, idx) => {
-          const nextId = order[(idx + 1) % order.length];
-          if (room.hands[id]?.length) savedCards[nextId] = room.hands[id].shift();
-        });
-        order.forEach(id => { if (savedCards[id]) room.hands[id].push(savedCards[id]); });
-      }
-
+      room.tricksTaken[winnerId] = (room.tricksTaken[winnerId] || 0) + 1;
       room.trickCount = (room.trickCount || 0) + 1;
       room.currentTrick = [];
-      room.turnIndex = winnerId === "bomb_exploded" ? room.turnIndex : order.indexOf(winnerId);
+      room.turnIndex = order.indexOf(winnerId);
 
       if (room.trickCount >= room.roundNo) {
-        // WOLKEN-EFFEKT: Korrektur am Rundenende
-        if (room.cloudWinnerId) {
-          const cid = room.cloudWinnerId;
-          if (room.tricksTaken[cid] !== room.bids[cid]) {
-            room.bids[cid] = room.tricksTaken[cid] > room.bids[cid] ? room.bids[cid] + 1 : Math.max(0, room.bids[cid] - 1);
-          }
-          room.cloudWinnerId = null;
-        }
         room = finishRoundAndMaybeNext(room);
+      } else {
+        room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
+        setTimeout(() => {
+          showToast(`${playerName(room, winnerId)} gewinnt den Stich`);
+        }, 50);
       }
       return room;
     }
@@ -1642,10 +1371,6 @@ function maybeScheduleBot(state) {
           if (!actual) return room;
           if (!isLegalPlay(actual, handNow, room.currentTrick || [], room.trumpSuit)) return room;
 
-          const wantTrick = (room.tricksTaken[currentBotId] || 0) < (room.bids[currentBotId] || 0);
-          if (actual.kind === ANNIVERSARY_KINDS.SHAPESHIFTER) actual.currentRole = wantTrick ? "wizard" : "jester";
-          if (actual.kind === ANNIVERSARY_KINDS.JUGGLER || actual.kind === ANNIVERSARY_KINDS.CLOUD) actual.suit = room.trumpSuit || SUITS[0].key;
-
           room.hands[currentBotId] = handNow.filter(c => c.id !== actual.id);
           room.currentTrick = room.currentTrick || [];
           room.currentTrick.push({ playerId: currentBotId, card: actual });
@@ -1653,43 +1378,14 @@ function maybeScheduleBot(state) {
           const orderNow = playerIds(room);
           if (room.currentTrick.length >= orderNow.length) {
             const winnerId = determineTrickWinner(room.currentTrick, room.trumpSuit);
-            
-            if (winnerId === "bomb_exploded") {
-              room.message = "💥 Eine Bombe ist explodiert! Stich wurde komplett vernichtet.";
-            } else {
-              room.tricksTaken[winnerId] = (room.tricksTaken[winnerId] || 0) + 1;
-              if (room.currentTrick.some(p => p.card.kind === ANNIVERSARY_KINDS.CLOUD)) {
-                room.cloudWinnerId = winnerId;
-              }
-            }
-
-            const hasJuggler = room.currentTrick.some(p => p.card.kind === ANNIVERSARY_KINDS.JUGGLER);
-            if (hasJuggler && room.trickCount + 1 < room.roundNo) {
-              let savedCards = {};
-              orderNow.forEach((id, idx) => {
-                const nextId = orderNow[(idx + 1) % orderNow.length];
-                if (room.hands[id]?.length) savedCards[nextId] = room.hands[id].shift();
-              });
-              orderNow.forEach(id => { if (savedCards[id]) room.hands[id].push(savedCards[id]); });
-            }
-
+            room.tricksTaken[winnerId] = (room.tricksTaken[winnerId] || 0) + 1;
             room.trickCount = (room.trickCount || 0) + 1;
             room.currentTrick = [];
-            room.turnIndex = winnerId === "bomb_exploded" ? room.turnIndex : orderNow.indexOf(winnerId);
-            
+            room.turnIndex = orderNow.indexOf(winnerId);
             if (room.trickCount >= room.roundNo) {
-              if (room.cloudWinnerId) {
-                const cid = room.cloudWinnerId;
-                if (room.tricksTaken[cid] !== room.bids[cid]) {
-                  room.bids[cid] = room.tricksTaken[cid] > room.bids[cid] ? room.bids[cid] + 1 : Math.max(0, room.bids[cid] - 1);
-                }
-                room.cloudWinnerId = null;
-              }
               room = finishRoundAndMaybeNext(room);
             } else {
-              if (winnerId !== "bomb_exploded") {
-                room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
-              }
+              room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
             }
           } else {
             room.turnIndex = (room.turnIndex + 1) % orderNow.length;
@@ -1708,6 +1404,7 @@ function maybeFillLocalRoomCode() {
   if (currentName) els.nameInput.value = currentName;
 }
 
+// EVENT LISTENER FÜR DIE NEUEN PFEILTASTEN
 els.bidMinusBtn.addEventListener("click", () => {
   if (currentSelectedBid > 0) {
     currentSelectedBid--;
@@ -1722,29 +1419,6 @@ els.bidPlusBtn.addEventListener("click", () => {
     updateBidDisplay();
   }
 });
-
-if (els.rulesBtn) {
-  els.rulesBtn.addEventListener("click", () => els.rulesOverlay.classList.remove("hidden"));
-}
-if (els.closeRulesBtn) {
-  els.closeRulesBtn.addEventListener("click", () => els.rulesOverlay.classList.add("hidden"));
-}
-if (els.closeStatsBtn) {
-  els.closeStatsBtn.addEventListener("click", () => els.statsOverlay.classList.add("hidden"));
-}
-if (els.fastGameCheckbox) {
-  els.fastGameCheckbox.addEventListener("change", async () => {
-    if (!roomCache || roomCache.hostId !== currentPlayerId) return;
-    await update(roomRef(currentRoomCode), { fastGame: els.fastGameCheckbox.checked });
-  });
-}
-
-if (els.anniversaryCheckbox) {
-  els.anniversaryCheckbox.addEventListener("change", async () => {
-    if (!roomCache || roomCache.hostId !== currentPlayerId) return;
-    await update(roomRef(currentRoomCode), { anniversaryCards: els.anniversaryCheckbox.checked });
-  });
-}
 
 els.joinBtn.addEventListener("click", () => joinOrCreateRoom(false));
 els.createBtn.addEventListener("click", () => {
