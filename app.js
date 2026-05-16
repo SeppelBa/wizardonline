@@ -526,7 +526,6 @@ function nicePhase(phase) {
   return map[phase] || (phase || "—");
 }
 
-// COOLE TRUMPF-ANZEIGE: Zeigt jetzt sofort die gewählte Farbe an, wenn der Zauberer gewählt wurde!
 function renderTrump(state) {
   if (state?.trumpSuit) {
     const suit = SUIT_BY_KEY[state.trumpSuit];
@@ -616,11 +615,15 @@ function renderRoom(state) {
     ? `Gewinner: ${state.winnerId ? playerName(state, state.winnerId) : "—"}`
     : "";
     
-  if (state.phase === "round_summary") {
+  // MEISTER-FIX: Das Pop-up öffnet sich jetzt sowohl bei Rundenende als auch bei Spielende!
+  const isSummary = state.phase === "round_summary";
+  const isFinished = state.phase === "finished";
+  
+  if (isSummary || isFinished) {
     if (!overlayAlreadyShown) {
       overlayAlreadyShown = true;
       setTimeout(() => {
-        if (roomCache && roomCache.phase === "round_summary") {
+        if (roomCache && (roomCache.phase === "round_summary" || roomCache.phase === "finished")) {
           showRoundOverlay(roomCache);
         }
       }, 500);
@@ -630,17 +633,13 @@ function renderRoom(state) {
     hideRoundOverlay();
   }
 
-  const isSummary = state.phase === "round_summary";
-  const isFinished = state.phase === "finished";
-  
   els.nextRoundBtn.classList.toggle("hidden", !(isSummary || isFinished));
   els.nextRoundBtn.disabled = !((isSummary || isFinished) && state.hostId === currentPlayerId);
-  els.nextRoundBtn.textContent = isSummary ? "Nächste Runde starten" : "Neues Spiel";
+  els.nextRoundBtn.textContent = isSummary ? "Nächste Runde starten" : "Neues Spiel starten";
 
   maybeScheduleBot(state);
 }
 
-// SPIELSTATUS VERBESSERUNG: Zeigt jetzt live die Ansage UND die bereits gemachten Stiche an!
 function renderBids(state) {
   els.bidsList.innerHTML = "";
   const order = playerIds(state);
@@ -842,17 +841,32 @@ function showToast(text) {
   }, 2600);
 }
 
+// DYNAMISCHES MEISTER-POPUP
 function showRoundOverlay(state) {
   if (!state) return;
 
   els.roundResults.innerHTML = "";
+  
+  const isFinished = state.phase === "finished";
+  const titleEl = els.roundOverlay.querySelector("h2");
+  
+  // Titel dynamisch anpassen: Fette Siegerehrung bei Spielende!
+  if (isFinished) {
+    const winner = highestScoreWinner(state);
+    if (titleEl) {
+      titleEl.innerHTML = `👑 GESAMTSIEG! 👑<br><span style="font-size: 1.1rem; color: #eab308; display:block; margin-top:5px; font-weight:bold;">✨ ${escapeHtml(winner ? winner.name : '—')} gewinnt das Spiel! ✨</span>`;
+    }
+  } else {
+    if (titleEl) {
+      titleEl.innerHTML = `✨ Runde beendet`;
+    }
+  }
 
   const rows = playerIds(state)
     .map(id => {
       const p = state.players[id];
       const bid = state.bids?.[id] ?? 0;
       const took = state.tricksTaken?.[id] ?? 0;
-
       const correct = bid === took;
 
       return {
@@ -867,17 +881,24 @@ function showRoundOverlay(state) {
 
   rows.forEach((r, index) => {
     const div = document.createElement("div");
-    div.className = `roundPlayer ${r.correct ? "success" : "fail"}`;
+    
+    // Farbliches Highlight anpassen
+    let rowClass = r.correct ? "success" : "fail";
+    if (isFinished) {
+      rowClass = index === 0 ? "success" : ""; // Der König bekommt das grüne Meister-Highlight
+    }
+    
+    div.className = `roundPlayer ${rowClass}`;
 
     div.innerHTML = `
-      <div class="roundRank">#${index + 1}</div>
+      <div class="roundRank">${isFinished && index === 0 ? "👑" : `#${index + 1}`}</div>
 
       <div class="roundName">
         ${escapeHtml(r.name)}
       </div>
 
       <div class="roundStats">
-        Ansage ${r.bid} · Stich ${r.took}
+        ${isFinished ? "Endstand der Partie" : `Ansage ${r.bid} · Stich ${r.took}`}
       </div>
 
       <div class="roundScore">
