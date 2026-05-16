@@ -76,7 +76,6 @@ let currentPlayerId = getOrCreateId();
 let currentName = localStorage.getItem(LOCAL.playerName) || "";
 let roomUnsub = null;
 let roomCache = null;
-let botTimerKey = "";
 let overlayAlreadyShown = false;
 
 if ("serviceWorker" in navigator) {
@@ -377,6 +376,8 @@ function initializeGame(room) {
   room.dealerIndex = 0;
   room.hostId = room.hostId || order[0];
   room.players = room.players || {};
+  room.scoreHistory = []; // Neues Array für den Runden-Verlauf
+  
   order.forEach((id, idx) => {
     room.players[id].seat = idx;
     room.players[id].score = room.players[id].score || 0;
@@ -388,11 +389,23 @@ function initializeGame(room) {
 
 function finishRoundAndMaybeNext(room) {
   const order = playerIds(room);
+  const roundPoints = {};
+
   for (const id of order) {
-    const bid = room.bids?.[id];
+    const bid = room.bids?.[id] ?? 0;
     const taken = room.tricksTaken?.[id] || 0;
-    room.players[id].score = (room.players[id].score || 0) + scoreRound(bid ?? 0, taken);
+    const diff = scoreRound(bid, taken);
+    
+    room.players[id].score = (room.players[id].score || 0) + diff;
+    roundPoints[id] = diff; // Sichere die Punkte dieser Runde
   }
+
+  // Verlauf mitschreiben
+  if (!room.scoreHistory) room.scoreHistory = [];
+  room.scoreHistory.push({
+    roundNo: room.roundNo,
+    points: roundPoints
+  });
 
   if (room.roundNo >= room.maxRound) {
     room.phase = "finished";
@@ -606,7 +619,6 @@ function renderHand(state) {
   els.hand.innerHTML = "";
   const hand = handOf(state, currentPlayerId);
   
-  // TRUMPF-ANZEIGE DIREKT NEBEN "DEINE KARTEN" RENDERN
   const handTitleEl = document.querySelector(".handTop h2");
   if (handTitleEl) {
     let trumpIndicator = "—";
@@ -649,35 +661,92 @@ function renderHand(state) {
   });
 }
 
+// NEUE WIZARD-BLOCK-TABELLEN-LOGIK
 function renderScores(state) {
   els.scores.innerHTML = "";
-  const rows = (playerIds(state).map(id => {
-    const p = state.players[id];
-    return {
-      id,
-      name: p.name,
-      score: Number(p.score || 0),
-      bid: state.bids?.[id],
-      took: Number(state.tricksTaken?.[id] || 0)
-    };
-  })).sort((a, b) => b.score - a.score);
+  const order = playerIds(state);
+  if (!order.length) return;
 
-  const head = document.createElement("div");
-  head.className = "scoreRow";
-  head.innerHTML = `<div><strong>Name</strong></div><div><strong>Pkt</strong></div><div><strong>Ans.</strong></div><div><strong>St.</strong></div>`;
-  els.scores.appendChild(head);
+  // Erstelle die responsive Tabellen-Struktur
+  const table = document.createElement("div");
+  table.style.display = "flex";
+  table.style.flexDirection = "column";
+  table.style.width = "100%";
+  table.style.fontSize = "0.8rem";
+  table.style.border = "1px solid rgba(255,255,255,0.05)";
+  table.style.borderRadius = "8px";
+  table.style.overflow = "hidden";
 
-  rows.forEach((r, idx) => {
-    const row = document.createElement("div");
-    row.className = "scoreRow";
-    row.innerHTML = `
-      <div class="${state.phase === "finished" && state.winnerId === r.id ? "winner" : ""}">${escapeHtml(r.name)}</div>
-      <div>${r.score}</div>
-      <div>${r.bid ?? "—"}</div>
-      <div>${r.took}</div>
-    `;
-    els.scores.appendChild(row);
+  // Grid-Template-Definition für perfekte Aufteilung
+  const columnsCount = order.length + 1; 
+  const gridTemplate = `1.2fr repeat(${order.length}, 1fr)`;
+
+  // 1. KOPFZEILE (Namen)
+  const headRow = document.createElement("div");
+  headRow.style.display = "grid";
+  headRow.style.gridTemplateColumns = gridTemplate;
+  headRow.style.background = "rgba(139, 92, 246, 0.15)";
+  headRow.style.padding = "6px 4px";
+  headRow.style.fontWeight = "bold";
+  headRow.style.textAlign = "center";
+  headRow.style.borderBottom = "1px solid rgba(255,255,255,0.1)";
+
+  headRow.innerHTML = `<div style="text-align: left; padding-left: 4px; color: var(--text-muted);">Runde</div>`;
+  order.forEach(id => {
+    const isMe = id === currentPlayerId;
+    headRow.innerHTML += `<div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; ${isMe ? 'color: var(--badge-me);' : ''}">${escapeHtml(playerName(state, id))}</div>`;
   });
+  table.appendChild(headRow);
+
+  // 2. RUNDEN-ZEILEN (Verlauf aus Firebase auslesen)
+  const history = state.scoreHistory || [];
+  history.forEach((hist, index) => {
+    const row = document.createElement("div");
+    row.style.display = "grid";
+    row.style.gridTemplateColumns = gridTemplate;
+    row.style.padding = "4px";
+    row.style.textAlign = "center";
+    row.style.borderBottom = "1px solid rgba(255,255,255,0.03)";
+    if (index % 2 === 1) row.style.background = "rgba(255,255,255,0.01)";
+
+    row.innerHTML = `<div style="text-align: left; padding-left: 4px; color: var(--text-muted);">R ${hist.roundNo}</div>`;
+    order.forEach(id => {
+      const pts = hist.points?.[id] ?? 0;
+      const color = pts >= 0 ? "#10b981" : "#ef4444";
+      const prefix = pts >= 0 ? "+" : "";
+      row.innerHTML += `<div style="color: ${color};">${prefix}${pts}</div>`;
+    });
+    table.appendChild(row);
+  });
+
+  // Dummy-Zeile falls noch keine Runde gespielt wurde
+  if (!history.length) {
+    const emptyRow = document.createElement("div");
+    emptyRow.style.padding = "8px";
+    emptyRow.style.textAlign = "center";
+    emptyRow.style.color = "var(--text-muted)";
+    emptyRow.textContent = "Noch keine Runden-Daten vorhanden.";
+    table.appendChild(emptyRow);
+  }
+
+  // 3. ERGEBNIS-ZEILE GANZ UNTEN (Gesamtsumme)
+  const totalRow = document.createElement("div");
+  totalRow.style.display = "grid";
+  totalRow.style.gridTemplateColumns = gridTemplate;
+  totalRow.style.background = "rgba(0,0,0,0.3)";
+  totalRow.style.padding = "6px 4px";
+  totalRow.style.fontWeight = "bold";
+  totalRow.style.textAlign = "center";
+  totalRow.style.borderTop = "1px solid rgba(255,255,255,0.1)";
+
+  totalRow.innerHTML = `<div style="text-align: left; padding-left: 4px; color: #fff;">Gesamt</div>`;
+  order.forEach(id => {
+    const totalScore = state.players?.[id]?.score ?? 0;
+    totalRow.innerHTML += `<div style="color: #fff; font-size: 0.9rem;">${totalScore} P</div>`;
+  });
+  table.appendChild(totalRow);
+
+  els.scores.appendChild(table);
 }
 
 function makeCardElement(card, showPlayerTag = false, playerTag = "") {
@@ -816,6 +885,7 @@ function roomStateOrDefault(roomCode, playerName, playerId) {
     bids: {},
     tricksTaken: {},
     hands: {},
+    scoreHistory: [],
     players: {
       [playerId]: {
         id: playerId,
@@ -1009,6 +1079,7 @@ async function resetToLobby() {
     room.bids = {};
     room.tricksTaken = {};
     room.hands = {};
+    room.scoreHistory = [];
     room.trumpCard = null;
     room.trumpSuit = null;
     room.pendingTrumpChoiceSeat = null;
@@ -1182,6 +1253,7 @@ async function nextRound() {
       room.bids = {};
       room.tricksTaken = {};
       room.hands = {};
+      room.scoreHistory = [];
       room.trumpCard = null;
       room.trumpSuit = null;
       room.pendingTrumpChoiceSeat = null;
@@ -1203,24 +1275,22 @@ async function nextRound() {
 function maybeScheduleBot(state) {
   if (!state) return;
   
-  // FIX: Wenn die Runde im Summary-Zustand pausiert, dürfen Bots NICHTS tun!
-  if (state.phase === "round_summary" || state.phase === "finished") return;
+  // LIVE-CHECK: Sofort stoppen bei Zusammenfassung
+  if (state.phase === "round_summary" || state.phase === "finished" || state.roundNo === 0) return;
 
   const order = playerIds(state);
   const botId = currentTurnPlayerId(state);
 
   if (!botId || !isBot(state, botId)) return;
 
-  const key = `${state.phase}:${state.roundNo}:${state.turnIndex}:${Object.keys(state.bids || {}).length}:${state.trickCount}:${state.currentTrick?.length}`;
-  if (botTimerKey === key) return;
-  botTimerKey = key;
-
+  // Verzögerter Start zur Sicherheit vor Race-Conditions
   window.setTimeout(async () => {
     const fresh = roomCache;
-    if (!fresh || fresh.phase === "round_summary" || fresh.phase === "finished") return;
+    // CRITICAL LIVE SAFETY DOUBLE-CHECK: Stimmen die Online-Daten exakt überein?
+    if (!fresh || fresh.phase === "round_summary" || fresh.phase === "finished" || fresh.roundNo === 0) return;
     
     const currentBotId = currentTurnPlayerId(fresh);
-    if (!currentBotId || !isBot(fresh, currentBotId)) return;
+    if (!currentBotId || !isBot(fresh, currentBotId) || currentBotId !== botId) return;
 
     if (fresh.phase === "choose_trump") {
       await chooseTrumpSuit(botTrumpChoice(fresh, currentBotId));
@@ -1285,13 +1355,13 @@ function maybeScheduleBot(state) {
             }
           } else {
             room.turnIndex = (room.turnIndex + 1) % orderNow.length;
-            room.message = `${playerName(room, orderNow[room.turnIndex])} ist am Zug.`;
+            row.message = `${playerName(room, orderNow[room.turnIndex])} ist am Zug.`;
           }
           return room;
         });
       }
     }
-  }, 650 + Math.random() * 500);
+  }, 600 + Math.random() * 400);
 }
 
 function maybeFillLocalRoomCode() {
