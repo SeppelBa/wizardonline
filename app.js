@@ -24,6 +24,17 @@ const SUITS = [
 const SUIT_BY_KEY = Object.fromEntries(SUITS.map(s => [s.key, s]));
 const BOT_NAMES = ["Merlin", "Gandalf", "Morgana", "HexerBot", "Rumpel", "Zaubix", "Arcana", "Fawkes", "Nexus", "Eldrin"];
 
+// JUBILÄUMS-SONDERKARTEN DEFINITIONEN
+const ANNIVERSARY_KINDS = {
+  DRAGON: "dragon",
+  PIXIE: "pixie",
+  BOMB: "bomb",
+  WEREWOLF: "werewolf",
+  JUGGLER: "juggler",
+  CLOUD: "cloud",
+  SHAPESHIFTER: "shapeshifter"
+};
+
 const els = {
   joinView: document.getElementById("joinView"),
   gameView: document.getElementById("gameView"),
@@ -66,10 +77,10 @@ const els = {
   closeOverlayBtn: document.getElementById("closeOverlayBtn"),
   leaderboardList: document.getElementById("leaderboardList"),
   toastContainer: document.getElementById("toastContainer"),
-  // NEUE REGELELEMENTE UND STATISTIKEN
   rulesBtn: document.getElementById("rulesBtn"),
   rulesOverlay: document.getElementById("rulesOverlay"),
   fastGameCheckbox: document.getElementById("fastGameCheckbox"),
+  anniversaryCheckbox: document.getElementById("anniversaryCheckbox"), // Element registriert
   closeRulesBtn: document.getElementById("closeRulesBtn"),
   rulesHostHint: document.getElementById("rulesHostHint"),
   statsOverlay: document.getElementById("statsOverlay"),
@@ -154,6 +165,18 @@ function createDeck() {
     deck.push({ id: uid(), kind: "wizard", label: "Zauberer" });
     deck.push({ id: uid(), kind: "jester", label: "Narr" });
   }
+
+  // Wenn die Jubiläums-Option aktiv ist, die 7 Sonderkarten in den Stapel mischen
+  if (roomCache && roomCache.anniversaryCards) {
+    deck.push({ id: uid(), kind: ANNIVERSARY_KINDS.DRAGON, label: "Drache" });
+    deck.push({ id: uid(), kind: ANNIVERSARY_KINDS.PIXIE, label: "Fee" });
+    deck.push({ id: uid(), kind: ANNIVERSARY_KINDS.BOMB, label: "Bombe" });
+    deck.push({ id: uid(), kind: ANNIVERSARY_KINDS.WEREWOLF, label: "Werwolf" });
+    deck.push({ id: uid(), kind: ANNIVERSARY_KINDS.JUGGLER, label: "Jongleur", rank: 7.5 });
+    deck.push({ id: uid(), kind: ANNIVERSARY_KINDS.CLOUD, label: "Wolke", rank: 9.75 });
+    deck.push({ id: uid(), kind: ANNIVERSARY_KINDS.SHAPESHIFTER, label: "Gestaltenwandler" });
+  }
+
   return shuffle(deck);
 }
 
@@ -167,7 +190,6 @@ function highestScoreWinner(room) {
   return players.reduce((best, p) => (!best || (p.score || 0) > (best.score || 0) ? p : best), null);
 }
 
-// FIX: Hier wurde sichergestellt, dass die Array-Zuweisung fehlerfrei läuft
 function playerIds(room) {
   return Array.isArray(room.order) ? room.order.slice() : Object.keys(room.players || {});
 }
@@ -227,6 +249,13 @@ function isBot(room, playerId) {
 
 function cardLabel(card) {
   if (!card) return "—";
+  if (card.kind === ANNIVERSARY_KINDS.DRAGON) return "🐉 Drache";
+  if (card.kind === ANNIVERSARY_KINDS.PIXIE) return "🧚 Fee";
+  if (card.kind === ANNIVERSARY_KINDS.BOMB) return "💣 Bombe";
+  if (card.kind === ANNIVERSARY_KINDS.WEREWOLF) return "🐺 Werwolf";
+  if (card.kind === ANNIVERSARY_KINDS.JUGGLER) return `🤹 Jongleur (${card.suit ? SUIT_BY_KEY[card.suit]?.short : '?'})`;
+  if (card.kind === ANNIVERSARY_KINDS.CLOUD) return `☁️ Wolke (${card.suit ? SUIT_BY_KEY[card.suit]?.short : '?'})`;
+  if (card.kind === ANNIVERSARY_KINDS.SHAPESHIFTER) return `🧬 Gestaltenw. (${card.currentRole === 'wizard' ? 'Zauberer' : 'Narr'})`;
   if (card.kind === "wizard") return "Zauberer";
   if (card.kind === "jester") return "Narr";
   const suit = SUIT_BY_KEY[card.suit];
@@ -234,8 +263,10 @@ function cardLabel(card) {
 }
 
 function cardStrength(card, trumpSuit, ledSuit) {
-  if (card.kind === "wizard") return 1000;
-  if (card.kind === "jester") return -1000;
+  if (card.kind === ANNIVERSARY_KINDS.DRAGON) return 2000;
+  if (card.kind === "wizard" || (card.kind === ANNIVERSARY_KINDS.SHAPESHIFTER && card.currentRole === "wizard")) return 1000;
+  if (card.kind === "jester" || (card.kind === ANNIVERSARY_KINDS.SHAPESHIFTER && card.currentRole === "jester") || card.kind === ANNIVERSARY_KINDS.BOMB) return -1000;
+  if (card.kind === ANNIVERSARY_KINDS.PIXIE) return -2000;
   let v = card.rank;
   if (trumpSuit && card.suit === trumpSuit) v += 100;
   else if (ledSuit && card.suit === ledSuit) v += 50;
@@ -246,13 +277,13 @@ function getLedSuit(trick) {
   if (!trick || trick.length === 0) return { wizardLed: false, ledSuit: null };
   
   const firstPlay = trick[0];
-  if (firstPlay.card?.kind === "wizard") {
+  if (firstPlay.card?.kind === ANNIVERSARY_KINDS.DRAGON || firstPlay.card?.kind === "wizard" || (firstPlay.card?.kind === ANNIVERSARY_KINDS.SHAPESHIFTER && firstPlay.card.currentRole === "wizard")) {
     return { wizardLed: true, ledSuit: null };
   }
-  if (firstPlay.card?.kind === "jester") {
+  if (firstPlay.card?.kind === ANNIVERSARY_KINDS.PIXIE || firstPlay.card?.kind === ANNIVERSARY_KINDS.BOMB || firstPlay.card?.kind === "jester" || (firstPlay.card?.kind === ANNIVERSARY_KINDS.SHAPESHIFTER && firstPlay.card.currentRole === "jester")) {
     for (const play of trick) {
-      if (play.card?.kind === "wizard") return { wizardLed: true, ledSuit: null };
-      if (play.card?.kind === "card") return { wizardLed: false, ledSuit: play.card.suit };
+      if (play.card?.kind === "wizard" || play.card?.kind === ANNIVERSARY_KINDS.DRAGON || (play.card?.kind === ANNIVERSARY_KINDS.SHAPESHIFTER && play.card.currentRole === "wizard")) return { wizardLed: true, ledSuit: null };
+      if (play.card?.suit) return { wizardLed: false, ledSuit: play.card.suit };
     }
     return { wizardLed: false, ledSuit: null };
   }
@@ -266,7 +297,7 @@ function legalCards(hand, trick, trumpSuit) {
   if (info.wizardLed || !info.ledSuit) return hand.slice();
   const hasSuit = hand.some(c => c.kind === "card" && c.suit === info.ledSuit);
   if (!hasSuit) return hand.slice();
-  return hand.filter(c => c.kind !== "card" || c.suit === info.ledSuit);
+  return hand.filter(c => c.kind !== "card" || c.suit === info.ledSuit || ["dragon", "pixie", "bomb", "werewolf", "juggler", "cloud", "shapeshifter"].includes(c.kind));
 }
 
 function isLegalPlay(card, hand, trick, trumpSuit) {
@@ -275,30 +306,38 @@ function isLegalPlay(card, hand, trick, trumpSuit) {
 
 function determineTrickWinner(trick, trumpSuit) {
   if (!trick?.length) return null;
-  const firstWizard = trick.find(play => play.card.kind === "wizard");
+  
+  // 1. Bombe prüfen
+  const hasBomb = trick.some(play => play.card.kind === ANNIVERSARY_KINDS.BOMB);
+  if (hasBomb) return "bomb_exploded";
+
+  // 2. Drache & Fee Allianz prüfen
+  const hasDragon = trick.find(play => play.card.kind === ANNIVERSARY_KINDS.DRAGON);
+  const hasPixie = trick.find(play => play.card.kind === ANNIVERSARY_KINDS.PIXIE);
+  if (hasDragon && hasPixie) return hasPixie.playerId;
+  if (hasDragon) return hasDragon.playerId;
+
+  // 3. Zauberer oder Gestaltenwandler-Zauberer prüfen
+  const firstWizard = trick.find(play => play.card.kind === "wizard" || (play.card.kind === ANNIVERSARY_KINDS.SHAPESHIFTER && play.card.currentRole === "wizard"));
   if (firstWizard) return firstWizard.playerId;
 
-  const allJesters = trick.every(play => play.card.kind === "jester");
+  // 4. Nur Narren/Fees im Stich?
+  const allJesters = trick.every(play => play.card.kind === "jester" || play.card.kind === ANNIVERSARY_KINDS.PIXIE || (play.card.kind === ANNIVERSARY_KINDS.SHAPESHIFTER && play.card.currentRole === "jester"));
   if (allJesters) return trick[0].playerId;
 
+  // 5. Reguläre Auswertung nach mathematischer Stärke (inkl. Jongleur & Wolke)
   const info = getLedSuit(trick);
   const ledSuit = info.ledSuit;
-
-  const trumpPlays = trumpSuit
-    ? trick.filter(play => play.card.kind === "card" && play.card.suit === trumpSuit)
-    : [];
-
-  const candidates = trumpPlays.length
-    ? trumpPlays
-    : trick.filter(play => play.card.kind === "card" && play.card.suit === ledSuit);
+  const trumpPlays = trumpSuit ? trick.filter(play => play.card.kind === "card" && play.card.suit === trumpSuit) : [];
+  const candidates = trumpPlays.length ? trumpPlays : trick.filter(play => (play.card.kind === "card" || play.card.kind === ANNIVERSARY_KINDS.JUGGLER || play.card.kind === ANNIVERSARY_KINDS.CLOUD) && play.card.suit === ledSuit);
 
   if (!candidates.length) {
-    return trick.find(play => play.card.kind === "jester")?.playerId || trick[0].playerId;
+    return trick.find(play => play.card.kind === "jester" || play.card.kind === ANNIVERSARY_KINDS.PIXIE)?.playerId || trick[0].playerId;
   }
 
   return candidates.reduce((best, play) => {
     if (!best) return play;
-    return (play.card.rank > best.card.rank) ? play : best;
+    return (cardStrength(play.card, trumpSuit, ledSuit) > cardStrength(best.card, trumpSuit, ledSuit)) ? play : best;
   }, null).playerId;
 }
 
@@ -337,35 +376,53 @@ function botTrumpChoice(room, playerId) {
   return Object.entries(tally).sort((a, b) => b[1] - a[1])[0][0];
 }
 
-// INTELLIGENZ-UPGRADE FÜR DIE BOTS: Wurf-Absicherung, um keine Karten mehr zu verschwenden
 function botChoosePlay(room, playerId) {
   const hand = handOf(room, playerId);
   const trick = currentTrick(room);
   const legal = legalCards(hand, trick, room.trumpSuit);
+  
+  const wantTrick = (room.tricksTaken?.[playerId] ?? 0) < (room.bids?.[playerId] ?? 0);
+  
+  // MEGA-SCHLAUES BOT-GEHIRN FÜR JUBILÄUMSKARTEN
+  for (let card of legal) {
+    if (card.kind === ANNIVERSARY_KINDS.SHAPESHIFTER) {
+      card.currentRole = wantTrick ? "wizard" : "jester";
+      return card;
+    }
+    if (card.kind === ANNIVERSARY_KINDS.DRAGON && wantTrick && !trick.some(p => p.card.kind === ANNIVERSARY_KINDS.PIXIE)) {
+      return card;
+    }
+    if (card.kind === ANNIVERSARY_KINDS.PIXIE && trick.some(p => p.card.kind === ANNIVERSARY_KINDS.DRAGON)) {
+      return card; // Genialer Fee-Konter gegen den Drachen!
+    }
+    if (card.kind === ANNIVERSARY_KINDS.BOMB && !wantTrick && trick.length > 0) {
+      return card; // Bot wirft die Bombe, um ungewollten Stich zu zerstören
+    }
+    if (card.kind === ANNIVERSARY_KINDS.JUGGLER || card.kind === ANNIVERSARY_KINDS.CLOUD) {
+      card.suit = room.trumpSuit || SUITS[0].key;
+      return card;
+    }
+  }
   
   const info = getLedSuit(trick);
   const sorted = legal.slice().sort((a, b) => {
     return cardStrength(a, room.trumpSuit, info.ledSuit) - cardStrength(b, room.trumpSuit, info.ledSuit);
   });
   
-  const bid = room.bids?.[playerId] ?? 0;
-  const taken = room.tricksTaken?.[playerId] ?? 0;
-  
-  if (taken < bid) {
-    // Der Bot möchte den Stich. Kann er ihn mit irgendeiner legalen Karte überhaupt gewinnen?
+  if (wantTrick) {
     const canWinWithAnyCard = legal.some(card => {
       const simulatedTrick = [...trick, { playerId: "bot_check", card }];
       return determineTrickWinner(simulatedTrick, room.trumpSuit) === "bot_check";
     });
     
     if (canWinWithAnyCard) {
-      return sorted[sorted.length - 1]; // Ja! Spiele die stärkste Karte.
+      return sorted[sorted.length - 1];
     } else {
-      return sorted[0]; // Nein, der Stich ist uneinholbar weg. Wirf die schwächste Karte ab!
+      return sorted[0];
     }
   }
   
-  return sorted[0]; // Will den Stich nicht. Spiele schwächste Karte.
+  return sorted[0];
 }
 
 function roundDealerIndex(room, roundNo) {
@@ -381,11 +438,23 @@ function buildRoundState(room, roundNo) {
   for (let i = 0; i < order.length; i++) {
     hands[order[i]] = deck.slice(i * size, (i + 1) * size);
   }
-  const trumpCard = deck[order.length * size] || null;
+  let trumpCard = deck[order.length * size] || null;
   const dealerIndex = roundDealerIndex(room, roundNo);
   const leaderIndex = (dealerIndex + 1) % order.length;
   const phase = trumpCard?.kind === "wizard" ? "choose_trump" : "bidding";
   const trumpSuit = trumpCard?.kind === "card" ? trumpCard.suit : null;
+
+  // WERWOLF EFFEKT: Automatischer Tausch gegen die aufgedeckte Trumpfkarte
+  if (room.anniversaryCards) {
+    for (const id of order) {
+      const wolfIdx = hands[id].findIndex(c => c.kind === ANNIVERSARY_KINDS.WEREWOLF);
+      if (wolfIdx !== -1 && trumpCard) {
+        const oldTrump = trumpCard;
+        trumpCard = hands[id][wolfIdx];
+        hands[id][wolfIdx] = oldTrump;
+      }
+    }
+  }
 
   const tricksTaken = {};
   const bids = {};
@@ -437,6 +506,7 @@ function roomStateOrDefault(roomCode, playerName, playerId) {
     hands: {},
     scoreHistory: [],
     fastGame: false,
+    anniversaryCards: false,
     players: {
       [playerId]: {
         id: playerId,
@@ -475,7 +545,6 @@ function initializeGame(room) {
   return room;
 }
 
-// ERWEITERTE STATISTIK-SPEICHERUNG: Trackt Wins und GamesPlayed für echte Menschen
 async function saveGlobalStatsToLeaderboard(room, topScore) {
   const order = playerIds(room);
   for (const id of order) {
@@ -556,7 +625,6 @@ function allBidsPlaced(room) {
   return order.every(id => room.bids && room.bids[id] !== null && room.bids[id] !== undefined);
 }
 
-// DETAILS-FENSTER FÜR PROFIL-STATISTIKEN ÖFFNEN
 function showPlayerStatsModal(player) {
   if (!els.statsOverlay) return;
   els.statsPlayerName.textContent = `📊 ${player.name}`;
@@ -674,13 +742,18 @@ function renderRoom(state) {
   renderHand(state);
   renderScores(state);
 
-  // REGELN UND CHECKBOX SYNCHRONISIEREN
   if (els.fastGameCheckbox) {
     els.fastGameCheckbox.checked = !!state.fastGame;
     els.fastGameCheckbox.disabled = !meIsHost;
     if (els.rulesHostHint) {
       els.rulesHostHint.style.display = meIsHost ? "none" : "block";
     }
+  }
+
+  // Checkbox-Haken und Hoster-Listener verknüpfen
+  if (els.anniversaryCheckbox) {
+    els.anniversaryCheckbox.checked = !!state.anniversaryCards;
+    els.anniversaryCheckbox.disabled = !meIsHost;
   }
 
   els.startBtn.disabled = !(meIsHost && state.phase === "lobby" && order.length >= 3 && order.length <= MAX_PLAYERS);
@@ -735,14 +808,13 @@ function renderRoom(state) {
   const isSummary = state.phase === "round_summary";
   const isFinished = state.phase === "finished";
   
-  // AUTOMATISCHES SCHNELLES SPIEL: EXAKTE FEINJUSTIERUNG auf 1,5 Sekunden (1500ms)
   if (isSummary && state.fastGame) {
     hideRoundOverlay();
     if (meIsHost && !fastGameTimeout) {
       fastGameTimeout = window.setTimeout(async () => {
         fastGameTimeout = null;
         await nextRound();
-      }, 1500); // 1.5 Sekunden Verzögerung für maximalen Spielfluss!
+      }, 1500);
     }
   } else if (isSummary || isFinished) {
     if (fastGameTimeout) { clearTimeout(fastGameTimeout); fastGameTimeout = null; }
@@ -928,12 +1000,30 @@ function renderScores(state) {
 
 function makeCardElement(card, showPlayerTag = false, playerTag = "") {
   const el = document.createElement("div");
-  const cls = card.kind === "wizard" ? "specialWizard" : card.kind === "jester" ? "specialJester" : SUIT_BY_KEY[card.suit]?.css || "";
+  
+  let cls = "";
+  let top = "";
+  let mid = "";
+  let bot = "";
+  
+  if (card.kind === "wizard") { cls = "specialWizard"; top = "🪄"; mid = "Zauberer"; }
+  else if (card.kind === "jester") { cls = "specialJester"; top = "🎭"; mid = "Narr"; }
+  else if (card.kind === ANNIVERSARY_KINDS.DRAGON) { cls = "specialDragon"; top = "🐉"; mid = "Drache"; }
+  else if (card.kind === ANNIVERSARY_KINDS.PIXIE) { cls = "specialPixie"; top = "🧚"; mid = "Fee"; }
+  else if (card.kind === ANNIVERSARY_KINDS.BOMB) { cls = "specialBomb"; top = "💣"; mid = "Bombe"; }
+  else if (card.kind === ANNIVERSARY_KINDS.WEREWOLF) { cls = "specialWerewolf"; top = "🐺"; mid = "Werwolf"; }
+  else if (card.kind === ANNIVERSARY_KINDS.JUGGLER) { cls = "specialJuggler"; top = "🤹"; mid = `Jongleur (${card.suit ? SUIT_BY_KEY[card.suit]?.short : '?'})`; }
+  else if (card.kind === ANNIVERSARY_KINDS.CLOUD) { cls = "specialCloud"; top = "☁️"; mid = `Wolke (${card.suit ? SUIT_BY_KEY[card.suit]?.short : '?'})`; }
+  else if (card.kind === ANNIVERSARY_KINDS.SHAPESHIFTER) { cls = "specialShapeshifter"; top = "🧬"; mid = `Gestaltenw. (${card.currentRole === 'wizard' ? 'Zauberer' : 'Narr'})`; }
+  else {
+    cls = SUIT_BY_KEY[card.suit]?.css || "";
+    const suit = SUIT_BY_KEY[card.suit];
+    top = suit ? suit.short : "?";
+    mid = card.rank;
+    bot = suit ? suit.label : "";
+  }
+  
   el.className = `card ${cls}`;
-  const suit = card.kind === "card" ? SUIT_BY_KEY[card.suit] : null;
-  const top = card.kind === "card" ? suit.short : card.kind === "wizard" ? "🪄" : "🎭";
-  const mid = card.kind === "card" ? card.rank : card.kind === "wizard" ? "Zauberer" : "Narr";
-  const bot = card.kind === "card" ? suit.label : "";
   el.innerHTML = `
     <div class="top"><span>${top}</span><span>${showPlayerTag && playerTag ? escapeHtml(playerTag) : ""}</span></div>
     <div class="mid">${escapeHtml(String(mid))}</div>
@@ -1382,6 +1472,11 @@ async function playCard(cardId) {
     if (!card) return room;
     if (!isLegalPlay(card, hand, room.currentTrick || [], room.trumpSuit)) return room;
 
+    // Automatisches Rollen-Zuweisen für flüssiges Mobile-Gameplay
+    const wantTrick = (room.tricksTaken[currentPlayerId] || 0) < (room.bids[currentPlayerId] || 0);
+    if (card.kind === ANNIVERSARY_KINDS.SHAPESHIFTER) card.currentRole = wantTrick ? "wizard" : "jester";
+    if (card.kind === ANNIVERSARY_KINDS.JUGGLER || card.kind === ANNIVERSARY_KINDS.CLOUD) card.suit = room.trumpSuit || SUITS[0].key;
+
     room.hands[currentPlayerId] = hand.filter(c => c.id !== cardId);
     room.currentTrick = room.currentTrick || [];
     room.currentTrick.push({
@@ -1391,18 +1486,45 @@ async function playCard(cardId) {
 
     if (room.currentTrick.length >= order.length) {
       const winnerId = determineTrickWinner(room.currentTrick, room.trumpSuit);
-      room.tricksTaken[winnerId] = (room.tricksTaken[winnerId] || 0) + 1;
+      
+      if (winnerId === "bomb_exploded") {
+        room.message = "💥 Eine Bombe ist explodiert! Stich wurde komplett vernichtet.";
+        setTimeout(() => { showToast("Bombe explodiert! Stich vernichtet."); }, 50);
+      } else {
+        room.tricksTaken[winnerId] = (room.tricksTaken[winnerId] || 0) + 1;
+        room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
+        setTimeout(() => { showToast(`${playerName(room, winnerId)} gewinnt den Stich`); }, 50);
+        
+        if (room.currentTrick.some(p => p.card.kind === ANNIVERSARY_KINDS.CLOUD)) {
+          room.cloudWinnerId = winnerId;
+        }
+      }
+
+      // JONGLEUR-EFFEKT: Handkarten im Uhrzeigersinn weitergeben
+      const hasJuggler = room.currentTrick.some(p => p.card.kind === ANNIVERSARY_KINDS.JUGGLER);
+      if (hasJuggler && room.trickCount + 1 < room.roundNo) {
+        let savedCards = {};
+        order.forEach((id, idx) => {
+          const nextId = order[(idx + 1) % order.length];
+          if (room.hands[id]?.length) savedCards[nextId] = room.hands[id].shift();
+        });
+        order.forEach(id => { if (savedCards[id]) room.hands[id].push(savedCards[id]); });
+      }
+
       room.trickCount = (room.trickCount || 0) + 1;
       room.currentTrick = [];
-      room.turnIndex = order.indexOf(winnerId);
+      room.turnIndex = winnerId === "bomb_exploded" ? room.turnIndex : order.indexOf(winnerId);
 
       if (room.trickCount >= room.roundNo) {
+        // WOLKEN-EFFEKT: Korrektur am Rundenende um +1 oder -1
+        if (room.cloudWinnerId) {
+          const cid = room.cloudWinnerId;
+          if (room.tricksTaken[cid] !== room.bids[cid]) {
+            room.bids[cid] = room.tricksTaken[cid] > room.bids[cid] ? room.bids[cid] + 1 : Math.max(0, room.bids[cid] - 1);
+          }
+          room.cloudWinnerId = null;
+        }
         room = finishRoundAndMaybeNext(room);
-      } else {
-        room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
-        setTimeout(() => {
-          showToast(`${playerName(room, winnerId)} gewinnt den Stich`);
-        }, 50);
       }
       return room;
     }
@@ -1514,6 +1636,11 @@ function maybeScheduleBot(state) {
           if (!actual) return room;
           if (!isLegalPlay(actual, handNow, room.currentTrick || [], room.trumpSuit)) return room;
 
+          // Automatisches Rollen-Zuweisen für flüssiges Mobile-Gameplay für den Bot
+          const wantTrick = (room.tricksTaken[currentBotId] || 0) < (room.bids[currentBotId] || 0);
+          if (actual.kind === ANNIVERSARY_KINDS.SHAPESHIFTER) actual.currentRole = wantTrick ? "wizard" : "jester";
+          if (actual.kind === ANNIVERSARY_KINDS.JUGGLER || actual.kind === ANNIVERSARY_KINDS.CLOUD) actual.suit = room.trumpSuit || SUITS[0].key;
+
           room.hands[currentBotId] = handNow.filter(c => c.id !== actual.id);
           room.currentTrick = room.currentTrick || [];
           room.currentTrick.push({ playerId: currentBotId, card: actual });
@@ -1521,14 +1648,45 @@ function maybeScheduleBot(state) {
           const orderNow = playerIds(room);
           if (room.currentTrick.length >= orderNow.length) {
             const winnerId = determineTrickWinner(room.currentTrick, room.trumpSuit);
-            room.tricksTaken[winnerId] = (room.tricksTaken[winnerId] || 0) + 1;
+            
+            if (winnerId === "bomb_exploded") {
+              room.message = "💥 Eine Bombe ist explodiert! Stich wurde komplett vernichtet.";
+            } else {
+              room.tricksTaken[winnerId] = (room.tricksTaken[winnerId] || 0) + 1;
+              if (room.currentTrick.some(p => p.card.kind === ANNIVERSARY_KINDS.CLOUD)) {
+                room.cloudWinnerId = winnerId;
+              }
+            }
+
+            // JONGLEUR-EFFEKT: Handkarten im Uhrzeigersinn weitergeben
+            const hasJuggler = room.currentTrick.some(p => p.card.kind === ANNIVERSARY_KINDS.JUGGLER);
+            if (hasJuggler && room.trickCount + 1 < room.roundNo) {
+              let savedCards = {};
+              orderNow.forEach((id, idx) => {
+                const nextId = orderNow[(idx + 1) % orderNow.length];
+                if (room.hands[id]?.length) savedCards[nextId] = room.hands[id].shift();
+              });
+              orderNow.forEach(id => { if (savedCards[id]) room.hands[id].push(savedCards[id]); });
+            }
+
             room.trickCount = (room.trickCount || 0) + 1;
             room.currentTrick = [];
-            room.turnIndex = orderNow.indexOf(winnerId);
+            room.turnIndex = winnerId === "bomb_exploded" ? room.turnIndex : orderNow.indexOf(winnerId);
+            
             if (room.trickCount >= room.roundNo) {
+              // WOLKEN-EFFEKT: Korrektur am Rundenende
+              if (room.cloudWinnerId) {
+                const cid = room.cloudWinnerId;
+                if (room.tricksTaken[cid] !== room.bids[cid]) {
+                  room.bids[cid] = room.tricksTaken[cid] > room.bids[cid] ? room.bids[cid] + 1 : Math.max(0, room.bids[cid] - 1);
+                }
+                room.cloudWinnerId = null;
+              }
               room = finishRoundAndMaybeNext(room);
             } else {
-              room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
+              if (winnerId !== "bomb_exploded") {
+                room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
+              }
             }
           } else {
             room.turnIndex = (room.turnIndex + 1) % orderNow.length;
@@ -1562,7 +1720,6 @@ els.bidPlusBtn.addEventListener("click", () => {
   }
 });
 
-// LISTENERS FÜR REGELEXTRA UND STATISTIKEN
 if (els.rulesBtn) {
   els.rulesBtn.addEventListener("click", () => els.rulesOverlay.classList.remove("hidden"));
 }
@@ -1576,6 +1733,14 @@ if (els.fastGameCheckbox) {
   els.fastGameCheckbox.addEventListener("change", async () => {
     if (!roomCache || roomCache.hostId !== currentPlayerId) return;
     await update(roomRef(currentRoomCode), { fastGame: els.fastGameCheckbox.checked });
+  });
+}
+
+// Firebase-Datenabgleich für die Jubiläums-Karten-Option
+if (els.anniversaryCheckbox) {
+  els.anniversaryCheckbox.addEventListener("change", async () => {
+    if (!roomCache || roomCache.hostId !== currentPlayerId) return;
+    await update(roomRef(currentRoomCode), { anniversaryCards: els.anniversaryCheckbox.checked });
   });
 }
 
