@@ -12,8 +12,12 @@
   <title>Wizard Online</title>
 
   <link rel="manifest" href="manifest.json">
-  <link rel="icon" href="icon.svg">
-  <link rel="apple-touch-icon" href="icon.svg">
+  
+  <!-- Standard Icon für Browser-Tabs -->
+  <link rel="icon" type="image/png" href="./icon.png">
+
+  <!-- Spezielles Icon für iPhones, wenn man die App auf den Homescreen legt -->
+  <link rel="apple-touch-icon" href="./icon.png">
 
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -24,13 +28,16 @@
   <div class="bgGlow bgGlow1"></div>
   <div class="bgGlow bgGlow2"></div>
 
+  <!-- TOAST NOTIFICATIONS (Hier fliegen die Stich-Meldungen rein) -->
+  <div id="toastContainer" class="toast-container"></div>
+
   <div class="app">
 
     <!-- HEADER -->
     <header class="topbar">
 
       <div>
-        <div class="eyebrow">Realtime · Multiplayer · Wizard</div>
+        <div class="eyebrow">Realtime • Multiplayer • Wizard</div>
         <h1>🪄 Wizard Online</h1>
       </div>
 
@@ -61,11 +68,9 @@
         </div>
 
         <div id="leaderboardList" class="leaderboardList">
-
           <div class="leaderboardItem skeleton"></div>
           <div class="leaderboardItem skeleton"></div>
           <div class="leaderboardItem skeleton"></div>
-
         </div>
 
       </div>
@@ -213,7 +218,7 @@
             Warten auf Spiel...
           </div>
 
-          <!-- BIDS -->
+          <!-- BIDS INPUT -->
           <div
             id="bidControls"
             class="controls hidden"
@@ -238,7 +243,7 @@
             class="hint"
           ></div>
 
-          <!-- TRUMP -->
+          <!-- TRUMP CHOICE -->
           <div
             id="trumpChoiceControls"
             class="hidden trumpBox"
@@ -282,7 +287,7 @@
 
           </div>
 
-          <!-- BIDS -->
+          <!-- BIDS LIST -->
           <div id="bidsList" class="list"></div>
 
         </section>
@@ -323,7 +328,7 @@
             id="nextRoundBtn"
             class="secondary hidden"
           >
-            Neue Partie
+            Nächste Runde starten
           </button>
 
         </section>
@@ -365,21 +370,15 @@
 
       <h2>✨ Runde beendet</h2>
 
-      <p id="roundWinnerText">
-        —
-      </p>
-
       <div
         id="roundResults"
         class="roundResults"
       ></div>
 
-      <div
-        id="overlayCountdown"
-        class="overlayCountdown"
-      >
-        Nächste Runde startet...
-      </div>
+      <!-- Schließen-Button, damit man das Spielfeld wieder sehen kann -->
+      <button id="closeOverlayBtn" class="secondary" style="margin-top: 15px; width: 100%;">
+        Ergebnisse schließen
+      </button>
 
     </div>
 
