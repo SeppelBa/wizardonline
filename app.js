@@ -66,7 +66,6 @@ const els = {
   closeOverlayBtn: document.getElementById("closeOverlayBtn"),
   leaderboardList: document.getElementById("leaderboardList"),
   toastContainer: document.getElementById("toastContainer"),
-  // NEUE REGELELEMENTE UND STATISTIKEN
   rulesBtn: document.getElementById("rulesBtn"),
   rulesOverlay: document.getElementById("rulesOverlay"),
   fastGameCheckbox: document.getElementById("fastGameCheckbox"),
@@ -336,7 +335,6 @@ function botTrumpChoice(room, playerId) {
   return Object.entries(tally).sort((a, b) => b[1] - a[1])[0][0];
 }
 
-// INTELLIGENZ-UPGRADE FÜR DIE BOTS: Wurf-Absicherung, um keine Karten mehr zu verschwenden
 function botChoosePlay(room, playerId) {
   const hand = handOf(room, playerId);
   const trick = currentTrick(room);
@@ -351,25 +349,19 @@ function botChoosePlay(room, playerId) {
   const taken = room.tricksTaken?.[playerId] ?? 0;
   
   if (taken < bid) {
-    // Der Bot möchte den Stich. Kann er ihn mit irgendeiner legalen Karte überhaupt gewinnen?
     const canWinWithAnyCard = legal.some(card => {
       const simulatedTrick = [...trick, { playerId: "bot_check", card }];
       return determineTrickWinner(simulatedTrick, room.trumpSuit) === "bot_check";
     });
     
     if (canWinWithAnyCard) {
-      return sorted[sorted.length - 1]; // Ja! Spiele die stärkste Karte.
+      return sorted[sorted.length - 1];
     } else {
-      return sorted[0]; // Nein, der Stich ist uneinholbar weg. Wirf die schwächste Karte ab!
+      return sorted[0];
     }
   }
   
-  return sorted[0]; // Will den Stich nicht. Spiele schwächste Karte.
-}
-
-function roundDealerIndex(room, roundNo) {
-  const order = playerIds(room);
-  return (roundNo - 1) % Math.max(order.length, 1);
+  return sorted[0];
 }
 
 function buildRoundState(room, roundNo) {
@@ -416,65 +408,6 @@ function buildRoundState(room, roundNo) {
   };
 }
 
-function roomStateOrDefault(roomCode, playerName, playerId) {
-  return {
-    roomCode,
-    createdAt: Date.now(),
-    hostId: playerId,
-    phase: "lobby",
-    roundNo: 0,
-    maxRound: 0,
-    dealerIndex: 0,
-    leaderIndex: 0,
-    turnIndex: 0,
-    bidStartIndex: 0,
-    currentBidOrderIndex: 0,
-    currentTrick: [],
-    trickCount: 0,
-    bids: {},
-    tricksTaken: {},
-    hands: {},
-    scoreHistory: [],
-    fastGame: false,
-    players: {
-      [playerId]: {
-        id: playerId,
-        name: playerName,
-        score: 0,
-        isBot: false,
-        seat: 0,
-        connected: true
-      }
-    },
-    order: [playerId],
-    trumpCard: null,
-    trumpSuit: null,
-    pendingTrumpChoiceSeat: null,
-    winnerId: null,
-    message: "Lobby erstellt."
-  };
-}
-
-function initializeGame(room) {
-  const order = playerIds(room);
-  const n = order.length;
-  room.roundNo = 1;
-  room.maxRound = Math.floor(60 / n);
-  room.dealerIndex = 0;
-  room.hostId = room.hostId || order[0];
-  room.players = room.players || {};
-  room.scoreHistory = [];
-  
-  order.forEach((id, idx) => {
-    room.players[id].seat = idx;
-    room.players[id].score = room.players[id].score || 0;
-  });
-  const round = buildRoundState(room, 1);
-  Object.assign(room, round);
-  return room;
-}
-
-// ERWEITERTE STATISTIK-SPEICHERUNG: Trackt Wins und GamesPlayed für echte Menschen
 async function saveGlobalStatsToLeaderboard(room, topScore) {
   const order = playerIds(room);
   for (const id of order) {
@@ -550,12 +483,6 @@ function finishRoundAndMaybeNext(room) {
   return room;
 }
 
-function allBidsPlaced(room) {
-  const order = playerIds(room);
-  return order.every(id => room.bids && room.bids[id] !== null && room.bids[id] !== undefined);
-}
-
-// DETAILS-FENSTER FÜR PROFIL-STATISTIKEN ÖFFNEN
 function showPlayerStatsModal(player) {
   if (!els.statsOverlay) return;
   els.statsPlayerName.textContent = `📊 ${player.name}`;
@@ -673,7 +600,6 @@ function renderRoom(state) {
   renderHand(state);
   renderScores(state);
 
-  // REGELN UND CHECKBOX SYNCHRONISIEREN
   if (els.fastGameCheckbox) {
     els.fastGameCheckbox.checked = !!state.fastGame;
     els.fastGameCheckbox.disabled = !meIsHost;
@@ -734,14 +660,14 @@ function renderRoom(state) {
   const isSummary = state.phase === "round_summary";
   const isFinished = state.phase === "finished";
   
-  // AUTOMATISCHES SCHNELLES SPIEL: Host schaltet nach 4 Sek automatisch weiter
+  // FEINJUSTIERUNG: Übergangs-Timer auf rasante 1.5 Sekunden verringert!
   if (isSummary && state.fastGame) {
     hideRoundOverlay();
     if (meIsHost && !fastGameTimeout) {
       fastGameTimeout = window.setTimeout(async () => {
         fastGameTimeout = null;
         await nextRound();
-      }, 4000);
+      }, 1500); 
     }
   } else if (isSummary || isFinished) {
     if (fastGameTimeout) { clearTimeout(fastGameTimeout); fastGameTimeout = null; }
@@ -1039,7 +965,6 @@ function hideRoundOverlay() {
   els.roundOverlay.classList.add("hidden");
 }
 
-// ERWEITERTE BESTENLISTE: Lädt Daten und macht Zeilen anklickbar
 async function fetchGlobalLeaderboard() {
   if (!els.leaderboardList) return;
   
@@ -1246,7 +1171,7 @@ async function startGame() {
   const roomReference = roomRef(currentRoomCode);
   await runTransaction(roomReference, room => {
     if (!room) return room;
-    const order = playerIds(room);
+    const order = order = playerIds(room);
     if (order.length < 3 || order.length > MAX_PLAYERS) return room;
     if (room.phase !== "lobby") return room;
     return initializeGame(room);
@@ -1562,7 +1487,6 @@ els.bidPlusBtn.addEventListener("click", () => {
   }
 });
 
-// LISTENERS FÜR REGELEXTRA UND STATISTIKEN
 if (els.rulesBtn) {
   els.rulesBtn.addEventListener("click", () => els.rulesOverlay.classList.remove("hidden"));
 }
