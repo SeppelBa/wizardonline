@@ -860,32 +860,60 @@ async function chooseTrumpSuit(suitKey) {
 }
 
 async function sendBid() {
-  if (!roomCache) return;
-  const bidValue = Number(els.bidInput.value);
-  if (!Number.isInteger(bidValue)) return;
+  if (!roomCache) {
+    alert("Fehler: Kein Raum-Cache vorhanden!");
+    return;
+  }
+  
+  let rawValue = els.bidInput.value;
+  if (rawValue === "") rawValue = "0"; // Failsafe fürs Handy
+  const bidValue = parseInt(rawValue, 10);
+  
+  if (isNaN(bidValue)) {
+    alert("Fehler: Eingegebener Wert ist keine gültige Zahl! Wert war: " + els.bidInput.value);
+    return;
+  }
+  
   const roomReference = roomRef(currentRoomCode);
-  await runTransaction(roomReference, room => {
-    if (!room || room.phase !== "bidding") return room;
-    const order = playerIds(room);
-    const bidderId = currentTurnPlayerId(room);
-    if (bidderId !== currentPlayerId) return room;
-    const allowed = validBidOptions(room, currentPlayerId);
-    if (!allowed.includes(bidValue)) return room;
-    
-    room.bids[currentPlayerId] = bidValue;
-    const nextIndex = Object.values(room.bids).filter(v => v !== null && v !== undefined).length;
-    room.currentBidOrderIndex = nextIndex;
-    
-    if (allBidsPlaced(room)) {
-      room.phase = "playing";
-      room.turnIndex = room.leaderIndex;
-      room.message = `Spielrunde läuft. ${playerName(room, room.order[room.turnIndex])} spielt aus.`;
+  try {
+    const result = await runTransaction(roomReference, room => {
+      if (!room) return room;
+      if (room.phase !== "bidding") {
+        return room;
+      }
+      const order = playerIds(room);
+      const bidderId = currentTurnPlayerId(room);
+      
+      if (bidderId !== currentPlayerId) {
+        return room;
+      }
+      
+      const allowed = validBidOptions(room, currentPlayerId);
+      if (!allowed.includes(bidValue)) {
+        return room;
+      }
+      
+      room.bids[currentPlayerId] = bidValue;
+      const nextIndex = Object.values(room.bids).filter(v => v !== null && v !== undefined).length;
+      room.currentBidOrderIndex = nextIndex;
+      
+      if (allBidsPlaced(room)) {
+        room.phase = "playing";
+        room.turnIndex = room.leaderIndex;
+        room.message = `Spielrunde läuft. ${playerName(room, room.order[room.turnIndex])} spielt aus.`;
+        return room;
+      }
+      room.turnIndex = (room.bidStartIndex + nextIndex) % order.length;
+      room.message = `Warten auf Ansage von ${playerName(room, room.order[room.turnIndex])}`;
       return room;
+    });
+
+    if (!result.committed) {
+      alert("Firebase Transaktion abgebrochen! Bist du wirklich laut System an der Reihe? Prüfe, ob dein Name im Kasten 'Ansage dran' steht.");
     }
-    room.turnIndex = (room.bidStartIndex + nextIndex) % order.length;
-    room.message = `Warten auf Ansage von ${playerName(room, room.order[room.turnIndex])}`;
-    return room;
-  });
+  } catch (error) {
+    alert("KRITISCHER FIREBASE FEHLER: " + error.message);
+  }
 }
 
 async function playCard(cardId) {
