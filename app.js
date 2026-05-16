@@ -149,7 +149,7 @@ function uid() {
 }
 
 function createDeck() {
-  const deck = [];
+  let deck = [];
   for (const suit of SUITS) {
     for (let rank = 1; rank <= 13; rank++) {
       deck.push({
@@ -267,7 +267,7 @@ function cardStrength(card, trumpSuit, ledSuit) {
   if (card.kind === "wizard" || (card.kind === ANNIVERSARY_KINDS.SHAPESHIFTER && card.currentRole === "wizard")) return 1000;
   if (card.kind === "jester" || (card.kind === ANNIVERSARY_KINDS.SHAPESHIFTER && card.currentRole === "jester") || card.kind === ANNIVERSARY_KINDS.BOMB) return -1000;
   if (card.kind === ANNIVERSARY_KINDS.PIXIE) return -2000;
-  let v = card.rank;
+  let v = card.rank || 0;
   if (trumpSuit && card.suit === trumpSuit) v += 100;
   else if (ledSuit && card.suit === ledSuit) v += 50;
   return v;
@@ -344,10 +344,10 @@ function determineTrickWinner(trick, trumpSuit) {
 function botStrengthForHand(hand, trumpSuit) {
   let score = 0;
   for (const card of hand) {
-    if (card.kind === "wizard") score += 40;
-    else if (card.kind === "jester") score -= 6;
+    if (card.kind === "wizard" || card.kind === ANNIVERSARY_KINDS.DRAGON) score += 40;
+    else if (card.kind === "jester" || card.kind === ANNIVERSARY_KINDS.PIXIE || card.kind === ANNIVERSARY_KINDS.BOMB) score -= 6;
     else {
-      score += card.rank;
+      score += card.rank || 5;
       if (trumpSuit && card.suit === trumpSuit) score += 10;
       if (card.rank >= 11) score += 4;
       if (card.rank >= 8) score += 2;
@@ -393,10 +393,10 @@ function botChoosePlay(room, playerId) {
       return card;
     }
     if (card.kind === ANNIVERSARY_KINDS.PIXIE && trick.some(p => p.card.kind === ANNIVERSARY_KINDS.DRAGON)) {
-      return card; // Genialer Fee-Konter gegen den Drachen!
+      return card;
     }
     if (card.kind === ANNIVERSARY_KINDS.BOMB && !wantTrick && trick.length > 0) {
-      return card; // Bot wirft die Bombe, um ungewollten Stich zu zerstören
+      return card;
     }
     if (card.kind === ANNIVERSARY_KINDS.JUGGLER || card.kind === ANNIVERSARY_KINDS.CLOUD) {
       card.suit = room.trumpSuit || SUITS[0].key;
@@ -1000,18 +1000,16 @@ function renderScores(state) {
 function makeCardElement(card, showPlayerTag = false, playerTag = "") {
   const el = document.createElement("div");
   
-  // 1. Richtige CSS-Klasse für die Hintergrundfarben ermitteln
   let cls = "";
   if (card.kind === "wizard") cls = "specialWizard";
   else if (card.kind === "jester") cls = "specialJester";
   else if (["dragon", "pixie", "bomb", "werewolf", "cloud", "juggler", "shapeshifter"].includes(card.kind)) {
-    cls = `special-${card.kind}`; // Verknüpft die Klassen aus deiner style.css
+    cls = `special-${card.kind}`;
   } else {
     cls = SUIT_BY_KEY[card.suit]?.css || "";
   }
   el.className = `card ${cls}`;
   
-  // 2. Symbole und Texte für die Jubiläumskarten festlegen
   const suit = SUIT_BY_KEY[card.suit];
   let top = "";
   let mid = "";
@@ -1480,7 +1478,7 @@ async function playCard(cardId) {
     if (!card) return room;
     if (!isLegalPlay(card, hand, room.currentTrick || [], room.trumpSuit)) return room;
 
-    // Automatisches Rollen-Zuweisen für flüssiges Mobile-Gameplay
+    // Automatisches Rollen-Zuweisen für flüssiges Gameplay
     const wantTrick = (room.tricksTaken[currentPlayerId] || 0) < (room.bids[currentPlayerId] || 0);
     if (card.kind === ANNIVERSARY_KINDS.SHAPESHIFTER) card.currentRole = wantTrick ? "wizard" : "jester";
     if (card.kind === ANNIVERSARY_KINDS.JUGGLER || card.kind === ANNIVERSARY_KINDS.CLOUD) card.suit = room.trumpSuit || SUITS[0].key;
@@ -1524,7 +1522,7 @@ async function playCard(cardId) {
       room.turnIndex = winnerId === "bomb_exploded" ? room.turnIndex : order.indexOf(winnerId);
 
       if (room.trickCount >= room.roundNo) {
-        // WOLKEN-EFFEKT: Korrektur am Rundenende um +1 oder -1
+        // WOLKEN-EFFEKT: Korrektur am Rundenende
         if (room.cloudWinnerId) {
           const cid = room.cloudWinnerId;
           if (room.tricksTaken[cid] !== room.bids[cid]) {
