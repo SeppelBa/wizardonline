@@ -80,7 +80,7 @@ let currentName = localStorage.getItem(LOCAL.playerName) || "";
 let roomUnsub = null;
 let roomCache = null;
 let overlayAlreadyShown = false;
-let currentSelectedBid = 0; // Interner Zähler für das neue Klick-System
+let currentSelectedBid = 0;
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js").catch(() => {});
@@ -193,7 +193,6 @@ function trickCount(room) {
   return room.trickCount || 0;
 }
 
-// Steuerung der Klick-Pfeile im UI
 function updateBidDisplay() {
   if (els.bidDisplay) {
     els.bidDisplay.textContent = currentSelectedBid;
@@ -398,19 +397,23 @@ function initializeGame(room) {
   return room;
 }
 
-async function saveGlobalWinnerToLeaderboard(winnerName, winnerId) {
-  if (!winnerId || winnerId.startsWith("bot_")) return;
-  const cleanName = winnerName.replace(/[.#$[\]]/g, "_"); 
-  const userScoreRef = ref(db, `global_leaderboard/${cleanName}`);
-  
-  try {
-    await runTransaction(userScoreRef, (currentWins) => {
-      return (currentWins || 0) + 1;
-    });
-    fetchGlobalLeaderboard();
-  } catch (e) {
-    console.error("Fehler beim Bestenlisten-Update:", e);
+async function saveGlobalWinnersToLeaderboard(room, topScore) {
+  const order = playerIds(room);
+  for (const id of order) {
+    const p = room.players?.[id];
+    if (p && !p.isBot && (p.score || 0) === topScore) {
+      const cleanName = p.name.replace(/[.#$[\]]/g, "_"); 
+      const userScoreRef = ref(db, `global_leaderboard/${cleanName}`);
+      try {
+        await runTransaction(userScoreRef, (currentWins) => {
+          return (currentWins || 0) + 1;
+        });
+      } catch (e) {
+        console.error("Fehler beim Bestenlisten-Update:", e);
+      }
+    }
   }
+  fetchGlobalLeaderboard();
 }
 
 function finishRoundAndMaybeNext(room) {
@@ -443,7 +446,7 @@ function finishRoundAndMaybeNext(room) {
     room.turnIndex = null;
     
     if (winner) {
-      saveGlobalWinnerToLeaderboard(winner.name, winner.id);
+      saveGlobalWinnersToLeaderboard(room, winner.score || 0);
     }
     return room;
   }
@@ -523,11 +526,17 @@ function nicePhase(phase) {
   return map[phase] || (phase || "—");
 }
 
+// COOLE TRUMPF-ANZEIGE: Zeigt jetzt sofort die gewählte Farbe an, wenn der Zauberer gewählt wurde!
 function renderTrump(state) {
+  if (state?.trumpSuit) {
+    const suit = SUIT_BY_KEY[state.trumpSuit];
+    return suit ? `${suit.short} ${suit.label}` : "—";
+  }
   if (!state?.trumpCard) return "—";
-  if (state.trumpCard.kind === "wizard") return "Wahl";
-  if (state.trumpCard.kind === "jester") return "Kein";
-  return SUIT_BY_KEY[state.trumpCard.suit]?.short || "—";
+  if (state.trumpCard.kind === "wizard") return "🪄 Wahl...";
+  if (state.trumpCard.kind === "jester") return "🎭 Kein";
+  const suit = SUIT_BY_KEY[state.trumpCard.suit];
+  return suit ? `${suit.short} ${suit.label}` : "—";
 }
 
 function renderRoom(state) {
@@ -571,7 +580,6 @@ function renderRoom(state) {
     const options = validBidOptions(state, currentPlayerId);
     els.bidHint.textContent = `Erlaubt: ${options.join(", ")}`;
     
-    // Zähler zurücksetzen falls er außerhalb der Optionen liegt
     if (currentSelectedBid > roundSize(state)) {
       currentSelectedBid = 0;
     }
@@ -632,14 +640,22 @@ function renderRoom(state) {
   maybeScheduleBot(state);
 }
 
+// SPIELSTATUS VERBESSERUNG: Zeigt jetzt live die Ansage UND die bereits gemachten Stiche an!
 function renderBids(state) {
   els.bidsList.innerHTML = "";
   const order = playerIds(state);
   order.forEach((id) => {
     const bid = state.bids?.[id];
+    const taken = state.tricksTaken?.[id] || 0;
     const row = document.createElement("div");
     row.className = "listItem";
-    row.innerHTML = `<span>${escapeHtml(playerName(state, id))}</span><strong>${bid === null || bid === undefined ? "—" : bid}</strong>`;
+    
+    let displayValue = "—";
+    if (bid !== null && bid !== undefined) {
+      displayValue = `${bid} / ${taken} St.`;
+    }
+    
+    row.innerHTML = `<span>${escapeHtml(playerName(state, id))}</span><strong>${displayValue}</strong>`;
     els.bidsList.appendChild(row);
   });
 }
@@ -662,12 +678,16 @@ function renderHand(state) {
   if (handTitleEl) {
     let trumpIndicator = "—";
     let badgeClass = "";
-    if (state?.trumpCard) {
+    if (state?.trumpSuit) {
+      const suit = SUIT_BY_KEY[state.trumpSuit];
+      trumpIndicator = `${suit?.short} ${suit?.label}`;
+      badgeClass = `badge ${suit?.css || ""}`;
+    } else if (state?.trumpCard) {
       if (state.trumpCard.kind === "wizard") {
-        trumpIndicator = "🪄 Wahl";
+        trumpIndicator = "🪄 Wahl läuft...";
         badgeClass = "badge bot";
       } else if (state.trumpCard.kind === "jester") {
-        trumpIndicator = "🎭 Kein";
+        trumpIndicator = "🎭 Kein Trumpf";
         badgeClass = "badge host";
       } else {
         const suit = SUIT_BY_KEY[state.trumpCard.suit];
@@ -1219,7 +1239,7 @@ async function sendBid() {
       return room;
     });
     
-    currentSelectedBid = 0; // Nach Absenden für die nächste Runde resetten
+    currentSelectedBid = 0;
 
   } catch (error) {
     alert("KRITISCHER FIREBASE FEHLER: " + error.message);
@@ -1404,7 +1424,6 @@ function maybeFillLocalRoomCode() {
   if (currentName) els.nameInput.value = currentName;
 }
 
-// EVENT LISTENER FÜR DIE NEUEN PFEILTASTEN
 els.bidMinusBtn.addEventListener("click", () => {
   if (currentSelectedBid > 0) {
     currentSelectedBid--;
