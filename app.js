@@ -58,6 +58,11 @@ const els = {
   bidHint: document.getElementById("bidHint"),
   biddingInfo: document.getElementById("biddingInfo"),
   nextRoundBtn: document.getElementById("nextRoundBtn"),
+  roundOverlay: document.getElementById("roundOverlay"),
+  roundResults: document.getElementById("roundResults"),
+  closeOverlayBtn: document.getElementById("closeOverlayBtn"),
+  leaderboardList: document.getElementById("leaderboardList"),
+  toastContainer: document.getElementById("toastContainer"),
 };
 
 const LOCAL = {
@@ -72,6 +77,7 @@ let currentName = localStorage.getItem(LOCAL.playerName) || "";
 let roomUnsub = null;
 let roomCache = null;
 let botTimerKey = "";
+let overlayAlreadyShown = false;
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js").catch(() => {});
@@ -501,6 +507,7 @@ function renderRoom(state) {
   renderTrick(state);
   renderHand(state);
   renderScores(state);
+  renderLeaderboard(state);
 
   els.startBtn.disabled = !(meIsHost && state.phase === "lobby" && order.length >= 3 && order.length <= MAX_PLAYERS);
   els.resetBtn.disabled = !meIsHost && state.phase !== "lobby";
@@ -545,6 +552,27 @@ function renderRoom(state) {
   els.finishInfo.textContent = state.phase === "finished"
     ? `Gewinner: ${state.winnerId ? playerName(state, state.winnerId) : "—"}`
     : "";
+    
+  if (
+    state.phase !== "playing" &&
+    state.phase !== "bidding" &&
+    state.phase !== "choose_trump"
+  ) {
+    overlayAlreadyShown = false;
+  }
+
+  if (
+    state.phase === "playing" &&
+    state.trickCount === state.roundNo &&
+    !overlayAlreadyShown
+  ) {
+    overlayAlreadyShown = true;
+
+    setTimeout(() => {
+      showRoundOverlay(state);
+    }, 900);
+  }
+
   els.nextRoundBtn.classList.toggle("hidden", state.phase !== "finished");
   els.nextRoundBtn.disabled = !(state.phase === "finished" && state.hostId === currentPlayerId);
 
@@ -652,6 +680,99 @@ function escapeHtml(str) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function showToast(text) {
+  const toast = document.createElement("div");
+  toast.className = "toast";
+  toast.textContent = text;
+
+  els.toastContainer.appendChild(toast);
+
+  setTimeout(() => {
+    toast.style.opacity = "0";
+    toast.style.transform = "translateY(-10px)";
+  }, 2200);
+
+  setTimeout(() => {
+    toast.remove();
+  }, 2600);
+}
+
+function showRoundOverlay(state) {
+  if (!state) return;
+
+  els.roundResults.innerHTML = "";
+
+  const rows = playerIds(state)
+    .map(id => {
+      const p = state.players[id];
+      const bid = state.bids?.[id] ?? 0;
+      const took = state.tricksTaken?.[id] ?? 0;
+
+      const correct = bid === took;
+
+      return {
+        name: p.name,
+        score: p.score || 0,
+        bid,
+        took,
+        correct
+      };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  rows.forEach((r, index) => {
+    const div = document.createElement("div");
+    div.className = `roundPlayer ${r.correct ? "success" : "fail"}`;
+
+    div.innerHTML = `
+      <div class="roundRank">#${index + 1}</div>
+
+      <div class="roundName">
+        ${escapeHtml(r.name)}
+      </div>
+
+      <div class="roundStats">
+        Ansage ${r.bid} · Stich ${r.took}
+      </div>
+
+      <div class="roundScore">
+        ${r.score} P
+      </div>
+    `;
+
+    els.roundResults.appendChild(div);
+  });
+
+  els.roundOverlay.classList.remove("hidden");
+}
+
+function hideRoundOverlay() {
+  els.roundOverlay.classList.add("hidden");
+}
+
+function renderLeaderboard(state) {
+  if (!els.leaderboardList) return;
+  if (!state?.players) return;
+
+  els.leaderboardList.innerHTML = "";
+
+  const players = Object.values(state.players)
+    .sort((a, b) => (b.score || 0) - (a.score || 0));
+
+  players.forEach((p, i) => {
+    const row = document.createElement("div");
+    row.className = "leaderboardRow";
+
+    row.innerHTML = `
+      <span>#${i + 1}</span>
+      <span>${escapeHtml(p.name)}</span>
+      <strong>${p.score || 0} P</strong>
+    `;
+
+    els.leaderboardList.appendChild(row);
+  });
 }
 
 function roomStateOrDefault(roomCode, playerName, playerId) {
@@ -868,7 +989,7 @@ async function resetToLobby() {
     room.trumpCard = null;
     room.trumpSuit = null;
     room.pendingTrumpChoiceSeat = null;
-    room.winnerId = null;
+    winnerId = null;
     room.message = "Zur Lobby zurückgesetzt.";
     return room;
   });
@@ -954,7 +1075,6 @@ async function sendBid() {
       
       room.bids[currentPlayerId] = bidValue;
       
-      // FIX: Zähle nur echte Werte, die nicht null/undefined sind
       const placedBidsCount = order.filter(id => room.bids[id] !== null && room.bids[id] !== undefined).length;
       room.currentBidOrderIndex = placedBidsCount;
       
@@ -1006,6 +1126,9 @@ async function playCard(cardId) {
         room = finishRoundAndMaybeNext(room);
       } else {
         room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
+        setTimeout(() => {
+          showToast(`${playerName(room, winnerId)} gewinnt den Stich`);
+        }, 50);
       }
       return room;
     }
@@ -1148,6 +1271,8 @@ els.fillBotsBtn.addEventListener("click", fillBotsTo3);
 els.bidBtn.addEventListener("click", sendBid);
 els.leaveBtn.addEventListener("click", leaveRoom);
 els.nextRoundBtn.addEventListener("click", nextRound);
+els.closeOverlayBtn?.addEventListener("click", hideRoundOverlay);
+
 document.querySelectorAll(".suitChoice").forEach(btn => {
   btn.addEventListener("click", () => chooseTrumpSuit(btn.dataset.suit));
 });
