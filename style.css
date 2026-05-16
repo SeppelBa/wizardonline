@@ -851,3 +851,12 @@ button:disabled{
   }
 
 }
+
+/* --- STYLES FÜR DIE SONDERKARTEN --- */
+.card.special-dragon { background: linear-gradient(135deg, #7f1d1d 0%, #450a0a 100%) !important; border-color: #ef4444 !important; box-shadow: 0 0 12px rgba(239, 68, 68, 0.5) !important; color: #fca5a5 !important; }
+.card.special-pixie { background: linear-gradient(135deg, #15803d 0%, #166534 100%) !important; border-color: #4ade80 !important; box-shadow: 0 0 10px rgba(74, 222, 128, 0.4) !important; color: #bbf7d0 !important; }
+.card.special-bomb { background: linear-gradient(135deg, #7c2d12 0%, #431407 100%) !important; border-color: #ea580c !important; box-shadow: 0 0 12px rgba(234, 88, 12, 0.4) !important; color: #ffedd5 !important; }
+.card.special-werewolf { background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%) !important; border-color: #64748b !important; color: #e2e8f0 !important; }
+.card.special-cloud { background: linear-gradient(135deg, #0369a1 0%, #0c4a6e 100%) !important; border-color: #38bdf8 !important; color: #e0f2fe !important; }
+.card.special-juggler { background: linear-gradient(135deg, #6d28d9 0%, #4c1d95 100%) !important; border-color: #a78bfa !important; color: #f5f3ff !important; }
+.card.special-shapeshifter { background: linear-gradient(135deg, #115e59 0%, #134e4a 100%) !important; border-color: #2dd4bf !important; color: #ccfbf1 !important; }
