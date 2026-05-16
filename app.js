@@ -6,6 +6,7 @@ import {
   runTransaction,
   set,
   update,
+  get,
   push
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 import { firebaseConfig } from "./config.js";
@@ -53,8 +54,10 @@ const els = {
   fillBotsBtn: document.getElementById("fillBotsBtn"),
   bidControls: document.getElementById("bidControls"),
   trumpChoiceControls: document.getElementById("trumpChoiceControls"),
-  bidInput: document.getElementById("bidInput"),
   bidBtn: document.getElementById("bidBtn"),
+  bidMinusBtn: document.getElementById("bidMinusBtn"),
+  bidPlusBtn: document.getElementById("bidPlusBtn"),
+  bidDisplay: document.getElementById("bidDisplay"),
   bidHint: document.getElementById("bidHint"),
   biddingInfo: document.getElementById("biddingInfo"),
   nextRoundBtn: document.getElementById("nextRoundBtn"),
@@ -77,6 +80,7 @@ let currentName = localStorage.getItem(LOCAL.playerName) || "";
 let roomUnsub = null;
 let roomCache = null;
 let overlayAlreadyShown = false;
+let currentSelectedBid = 0; // Interner Zähler für das neue Klick-System
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js").catch(() => {});
@@ -187,6 +191,13 @@ function maxRound(room) {
 
 function trickCount(room) {
   return room.trickCount || 0;
+}
+
+// Steuerung der Klick-Pfeile im UI
+function updateBidDisplay() {
+  if (els.bidDisplay) {
+    els.bidDisplay.textContent = currentSelectedBid;
+  }
 }
 
 function handOf(room, playerId) {
@@ -387,6 +398,21 @@ function initializeGame(room) {
   return room;
 }
 
+async function saveGlobalWinnerToLeaderboard(winnerName, winnerId) {
+  if (!winnerId || winnerId.startsWith("bot_")) return;
+  const cleanName = winnerName.replace(/[.#$[\]]/g, "_"); 
+  const userScoreRef = ref(db, `global_leaderboard/${cleanName}`);
+  
+  try {
+    await runTransaction(userScoreRef, (currentWins) => {
+      return (currentWins || 0) + 1;
+    });
+    fetchGlobalLeaderboard();
+  } catch (e) {
+    console.error("Fehler beim Bestenlisten-Update:", e);
+  }
+}
+
 function finishRoundAndMaybeNext(room) {
   const order = playerIds(room);
   const roundPoints = {};
@@ -415,6 +441,10 @@ function finishRoundAndMaybeNext(room) {
     room.currentTrick = [];
     room.bidStartIndex = null;
     room.turnIndex = null;
+    
+    if (winner) {
+      saveGlobalWinnerToLeaderboard(winner.name, winner.id);
+    }
     return room;
   }
 
@@ -446,6 +476,10 @@ function validBidOptions(room, playerId) {
     if (isLast && (existing + b) === round) continue;
     options.push(b);
   }
+  
+  if (options.length === 0) {
+    options.push(0);
+  }
   return options;
 }
 
@@ -463,6 +497,9 @@ function showJoinView(show) {
   els.joinView.classList.toggle("hidden", !show);
   els.gameView.classList.toggle("hidden", show);
   els.leaveBtn.classList.toggle("hidden", show);
+  if (show) {
+    fetchGlobalLeaderboard();
+  }
 }
 
 function setStatusText(state) {
@@ -520,22 +557,25 @@ function renderRoom(state) {
   renderTrick(state);
   renderHand(state);
   renderScores(state);
-  renderLeaderboard(state);
 
   els.startBtn.disabled = !(meIsHost && state.phase === "lobby" && order.length >= 3 && order.length <= MAX_PLAYERS);
   els.resetBtn.disabled = !meIsHost && state.phase !== "lobby";
   els.addBotBtn.disabled = !(meIsHost && state.phase === "lobby");
   els.fillBotsBtn.disabled = !(meIsHost && state.phase === "lobby");
 
-  els.bidControls.classList.toggle("hidden", !(state.phase === "bidding" && currentTurn === currentPlayerId && meIsInGame && !state.players[currentPlayerId]?.isBot));
+  const isMyBiddingTurn = (state.phase === "bidding" && currentTurn === currentPlayerId && meIsInGame && !state.players[currentPlayerId]?.isBot);
+  els.bidControls.classList.toggle("hidden", !isMyBiddingTurn);
   els.trumpChoiceControls.classList.toggle("hidden", !(state.phase === "choose_trump" && dealerPlayerId(state) === currentPlayerId && !state.players[currentPlayerId]?.isBot));
   
-  if (state.phase === "bidding" && currentTurn === currentPlayerId) {
+  if (isMyBiddingTurn) {
     const options = validBidOptions(state, currentPlayerId);
     els.bidHint.textContent = `Erlaubt: ${options.join(", ")}`;
-    els.bidInput.min = "0";
-    els.bidInput.max = String(roundSize(state));
-    if (!els.bidInput.value) els.bidInput.value = String(Math.min(roundSize(state), Math.round(roundSize(state) / 2)));
+    
+    // Zähler zurücksetzen falls er außerhalb der Optionen liegt
+    if (currentSelectedBid > roundSize(state)) {
+      currentSelectedBid = 0;
+    }
+    updateBidDisplay();
   } else {
     els.bidHint.textContent = "";
   }
@@ -835,27 +875,43 @@ function hideRoundOverlay() {
   els.roundOverlay.classList.add("hidden");
 }
 
-function renderLeaderboard(state) {
+async function fetchGlobalLeaderboard() {
   if (!els.leaderboardList) return;
-  if (!state?.players) return;
+  
+  const leaderboardRef = ref(db, "global_leaderboard");
+  try {
+    const snapshot = await get(leaderboardRef);
+    els.leaderboardList.innerHTML = "";
+    
+    if (!snapshot.exists()) {
+      els.leaderboardList.innerHTML = `<div style="text-align:center; padding:10px; color:var(--text-muted);">Noch keine Siege registriert.</div>`;
+      return;
+    }
 
-  els.leaderboardList.innerHTML = "";
+    const data = snapshot.val();
+    const sortedEntries = Object.entries(data)
+      .map(([name, wins]) => ({ name, wins: Number(wins) }))
+      .sort((a, b) => b.wins - a.wins)
+      .slice(0, 10);
 
-  const players = Object.values(state.players)
-    .sort((a, b) => (b.score || 0) - (a.score || 0));
+    sortedEntries.forEach((player, idx) => {
+      const row = document.createElement("div");
+      row.className = "leaderboardRow";
+      row.style.display = "flex";
+      row.style.justifyContent = "space-between";
+      row.style.padding = "6px 8px";
+      row.style.fontSize = "0.85rem";
+      row.style.borderBottom = "1px solid rgba(255,255,255,0.03)";
 
-  players.forEach((p, i) => {
-    const row = document.createElement("div");
-    row.className = "leaderboardRow";
-
-    row.innerHTML = `
-      <span>#${i + 1}</span>
-      <span>${escapeHtml(p.name)}</span>
-      <strong>${p.score || 0} P</strong>
-    `;
-
-    els.leaderboardList.appendChild(row);
-  });
+      row.innerHTML = `
+        <span>#${idx + 1} <strong>${escapeHtml(player.name)}</strong></span>
+        <strong style="color: #ca8a04;">🏆 ${player.wins} ${player.wins === 1 ? 'Sieg' : 'Siege'}</strong>
+      `;
+      els.leaderboardList.appendChild(row);
+    });
+  } catch (e) {
+    console.error("Fehler beim Abrufen der Bestenliste:", e);
+  }
 }
 
 function roomStateOrDefault(roomCode, playerName, playerId) {
@@ -949,7 +1005,7 @@ async function joinOrCreateRoom(isCreate = false) {
     }
 
     if (!alreadyPlayer) {
-      room.spectators[currentPlayerId] = { id: currentPlayerId, name, joinedAt: Date.now() };
+      room.spectators[currentPlayerId] = { id: playerId, name, joinedAt: Date.now() };
       room.message = `${name} ist als Zuschauer beigetreten.`;
       return room;
     }
@@ -1129,25 +1185,14 @@ async function chooseTrumpSuit(suitKey) {
 }
 
 async function sendBid() {
-  if (!roomCache) {
-    alert("Fehler: Kein Raum-Cache vorhanden!");
-    return;
-  }
+  if (!roomCache) return;
   
-  let rawValue = els.bidInput.value;
-  if (rawValue === "") rawValue = "0";
-  const bidValue = parseInt(rawValue, 10);
-  
-  if (isNaN(bidValue)) {
-    alert("Fehler: Keine gültige Zahl!");
-    return;
-  }
-  
+  const bidValue = currentSelectedBid;
   const roomReference = roomRef(currentRoomCode);
+  
   try {
-    const result = await runTransaction(roomReference, room => {
-      if (!room) return room;
-      if (room.phase !== "bidding") return room;
+    await runTransaction(roomReference, room => {
+      if (!room || room.phase !== "bidding") return room;
       
       const order = playerIds(room);
       const bidderId = currentTurnPlayerId(room);
@@ -1157,7 +1202,6 @@ async function sendBid() {
       if (!allowed.includes(bidValue)) return room;
       
       if (!room.bids) room.bids = {};
-      
       room.bids[currentPlayerId] = bidValue;
       
       const placedBidsCount = order.filter(id => room.bids[id] !== null && room.bids[id] !== undefined).length;
@@ -1174,6 +1218,8 @@ async function sendBid() {
       room.message = `Warten auf Ansage von ${playerName(room, room.order[room.turnIndex])}`;
       return room;
     });
+    
+    currentSelectedBid = 0; // Nach Absenden für die nächste Runde resetten
 
   } catch (error) {
     alert("KRITISCHER FIREBASE FEHLER: " + error.message);
@@ -1219,7 +1265,6 @@ async function playCard(cardId) {
     }
 
     room.turnIndex = (room.turnIndex + 1) % order.length;
-    // FIX: room.message statt fälschlicherweise row.message!
     room.message = `${playerName(room, order[room.turnIndex])} ist am Zug.`;
     return room;
   });
@@ -1292,10 +1337,11 @@ function maybeScheduleBot(state) {
         const bidder = currentTurnPlayerId(room);
         if (bidder !== currentBotId) return room;
         const allowed = validBidOptions(room, currentBotId);
-        if (!allowed.includes(choice)) return room;
+        
+        const finalChoice = allowed.includes(choice) ? choice : allowed[0];
         
         if (!room.bids) room.bids = {};
-        room.bids[currentBotId] = choice;
+        room.bids[currentBotId] = finalChoice;
         
         const placedBidsCount = order.filter(id => room.bids[id] !== null && room.bids[id] !== undefined).length;
         room.currentBidOrderIndex = placedBidsCount;
@@ -1358,6 +1404,22 @@ function maybeFillLocalRoomCode() {
   if (currentName) els.nameInput.value = currentName;
 }
 
+// EVENT LISTENER FÜR DIE NEUEN PFEILTASTEN
+els.bidMinusBtn.addEventListener("click", () => {
+  if (currentSelectedBid > 0) {
+    currentSelectedBid--;
+    updateBidDisplay();
+  }
+});
+
+els.bidPlusBtn.addEventListener("click", () => {
+  const maxBidsAllowed = roomCache ? roundSize(roomCache) : 20;
+  if (currentSelectedBid < maxBidsAllowed) {
+    currentSelectedBid++;
+    updateBidDisplay();
+  }
+});
+
 els.joinBtn.addEventListener("click", () => joinOrCreateRoom(false));
 els.createBtn.addEventListener("click", () => {
   els.roomInput.value = randomRoomCode();
@@ -1403,6 +1465,8 @@ if (savedRoom) {
   if (els.nameInput.value) currentName = els.nameInput.value;
   showJoinView(false);
   listenToRoom(savedRoom);
+} else {
+  fetchGlobalLeaderboard();
 }
 
 window.addEventListener("beforeunload", () => {
