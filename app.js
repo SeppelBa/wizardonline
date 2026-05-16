@@ -227,6 +227,7 @@ function getLedSuit(trick) {
   return { wizardLed: false, ledSuit: null };
 }
 
+// Ermittelt erlaubte Handkarten (Bedienzwang)
 function legalCards(hand, trick, trumpSuit) {
   if (!hand?.length) return [];
   const info = getLedSuit(trick);
@@ -406,8 +407,9 @@ function finishRoundAndMaybeNext(room) {
     return room;
   }
 
-  const next = buildRoundState(room, room.roundNo + 1);
-  Object.assign(room, next);
+  // FIX: Nicht sofort weiter, sondern Pause einlegen!
+  room.phase = "round_summary";
+  room.message = "Runde beendet! Der Host startet gleich die nächste Runde.";
   return room;
 }
 
@@ -468,6 +470,7 @@ function nicePhase(phase) {
     choose_trump: "Trumpf wählen",
     bidding: "Ansagen",
     playing: "Spielzug",
+    round_summary: "Rundenende",
     finished: "Fertig"
   };
   return map[phase] || (phase || "—");
@@ -543,7 +546,9 @@ function renderRoom(state) {
       ? (currentTurn === currentPlayerId ? "Du musst deine Ansage senden." : `Warten auf ${playerName(state, currentTurn)}.`)
       : state.phase === "choose_trump"
         ? (dealerPlayerId(state) === currentPlayerId ? "Du darfst Trumpf wählen." : `Warten auf ${playerName(state, dealerPlayerId(state))}.`)
-        : "Keine Kartenphase.";
+        : state.phase === "round_summary"
+          ? "Runde vorbei! Ergebnisse werden angezeigt."
+          : "Keine Kartenphase.";
 
   els.trickInfo.textContent = state.phase === "playing"
     ? `Stiche in dieser Runde: ${state.trickCount}/${roundSize(state)}`
@@ -553,28 +558,28 @@ function renderRoom(state) {
     ? `Gewinner: ${state.winnerId ? playerName(state, state.winnerId) : "—"}`
     : "";
     
-  if (
-    state.phase !== "playing" &&
-    state.phase !== "bidding" &&
-    state.phase !== "choose_trump"
-  ) {
+  // AUTOMATISCHES ÖFFNEN DES OVERLAYS BEI PAUSE
+  if (state.phase === "round_summary") {
+    if (!overlayAlreadyShown) {
+      overlayAlreadyShown = true;
+      setTimeout(() => {
+        if (roomCache && roomCache.phase === "round_summary") {
+          showRoundOverlay(roomCache);
+        }
+      }, 500); // 500ms Delay für besseres Feeling
+    }
+  } else {
     overlayAlreadyShown = false;
+    hideRoundOverlay();
   }
 
-  if (
-    state.phase === "playing" &&
-    state.trickCount === state.roundNo &&
-    !overlayAlreadyShown
-  ) {
-    overlayAlreadyShown = true;
-
-    setTimeout(() => {
-      showRoundOverlay(state);
-    }, 900);
-  }
-
-  els.nextRoundBtn.classList.toggle("hidden", state.phase !== "finished");
-  els.nextRoundBtn.disabled = !(state.phase === "finished" && state.hostId === currentPlayerId);
+  // WEITER-BUTTON LOGIK
+  const isSummary = state.phase === "round_summary";
+  const isFinished = state.phase === "finished";
+  
+  els.nextRoundBtn.classList.toggle("hidden", !(isSummary || isFinished));
+  els.nextRoundBtn.disabled = !((isSummary || isFinished) && state.hostId === currentPlayerId);
+  els.nextRoundBtn.textContent = isSummary ? "Nächste Runde starten" : "Neues Spiel";
 
   maybeScheduleBot(state);
 }
@@ -989,7 +994,7 @@ async function resetToLobby() {
     room.trumpCard = null;
     room.trumpSuit = null;
     room.pendingTrumpChoiceSeat = null;
-    winnerId = null;
+    room.winnerId = null;
     room.message = "Zur Lobby zurückgesetzt.";
     return room;
   });
@@ -1140,26 +1145,41 @@ async function playCard(cardId) {
 }
 
 async function nextRound() {
-  if (!roomCache || roomCache.hostId !== currentPlayerId || roomCache.phase !== "finished") return;
-  const roomReference = roomRef(currentRoomCode);
+  if (!roomCache || roomCache.hostId !== currentPlayerId) return;
+  if (roomCache.phase !== "finished" && roomCache.phase !== "round_summary") return;
+  
+  const roomReference = ref(db, `rooms/${currentRoomCode}`);
   await runTransaction(roomReference, room => {
-    if (!room || room.phase !== "finished") return room;
-    room.phase = "lobby";
-    room.roundNo = 0;
-    room.maxRound = 0;
-    room.dealerIndex = 0;
-    room.turnIndex = 0;
-    room.bidStartIndex = 0;
-    room.currentTrick = [];
-    room.trickCount = 0;
-    room.bids = {};
-    room.tricksTaken = {};
-    room.hands = {};
-    room.trumpCard = null;
-    room.trumpSuit = null;
-    room.pendingTrumpChoiceSeat = null;
-    room.winnerId = null;
-    room.message = "Neue Partie bereit.";
+    if (!room) return room;
+    
+    // Fall 1: Das komplette Spiel ist zu Ende -> Zurücksetzen in die Lobby
+    if (room.phase === "finished") {
+      room.phase = "lobby";
+      room.roundNo = 0;
+      room.maxRound = 0;
+      room.dealerIndex = 0;
+      room.turnIndex = 0;
+      room.bidStartIndex = 0;
+      room.currentTrick = [];
+      room.trickCount = 0;
+      room.bids = {};
+      room.tricksTaken = {};
+      room.hands = {};
+      room.trumpCard = null;
+      room.trumpSuit = null;
+      room.pendingTrumpChoiceSeat = null;
+      room.winnerId = null;
+      room.message = "Neue Partie bereit.";
+      return room;
+    }
+    
+    // Fall 2: Nur die Runde ist vorbei -> Nächste Runde generieren
+    if (room.phase === "round_summary") {
+      const next = buildRoundState(room, room.roundNo + 1);
+      Object.assign(room, next);
+      return room;
+    }
+    
     return room;
   });
 }
