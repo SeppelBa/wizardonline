@@ -376,7 +376,7 @@ function initializeGame(room) {
   room.dealerIndex = 0;
   room.hostId = room.hostId || order[0];
   room.players = room.players || {};
-  room.scoreHistory = []; // Neues Array für den Runden-Verlauf
+  room.scoreHistory = [];
   
   order.forEach((id, idx) => {
     room.players[id].seat = idx;
@@ -397,10 +397,9 @@ function finishRoundAndMaybeNext(room) {
     const diff = scoreRound(bid, taken);
     
     room.players[id].score = (room.players[id].score || 0) + diff;
-    roundPoints[id] = diff; // Sichere die Punkte dieser Runde
+    roundPoints[id] = diff;
   }
 
-  // Verlauf mitschreiben
   if (!room.scoreHistory) room.scoreHistory = [];
   room.scoreHistory.push({
     roundNo: room.roundNo,
@@ -661,13 +660,11 @@ function renderHand(state) {
   });
 }
 
-// NEUE WIZARD-BLOCK-TABELLEN-LOGIK
 function renderScores(state) {
   els.scores.innerHTML = "";
   const order = playerIds(state);
   if (!order.length) return;
 
-  // Erstelle die responsive Tabellen-Struktur
   const table = document.createElement("div");
   table.style.display = "flex";
   table.style.flexDirection = "column";
@@ -677,11 +674,8 @@ function renderScores(state) {
   table.style.borderRadius = "8px";
   table.style.overflow = "hidden";
 
-  // Grid-Template-Definition für perfekte Aufteilung
-  const columnsCount = order.length + 1; 
   const gridTemplate = `1.2fr repeat(${order.length}, 1fr)`;
 
-  // 1. KOPFZEILE (Namen)
   const headRow = document.createElement("div");
   headRow.style.display = "grid";
   headRow.style.gridTemplateColumns = gridTemplate;
@@ -698,7 +692,6 @@ function renderScores(state) {
   });
   table.appendChild(headRow);
 
-  // 2. RUNDEN-ZEILEN (Verlauf aus Firebase auslesen)
   const history = state.scoreHistory || [];
   history.forEach((hist, index) => {
     const row = document.createElement("div");
@@ -719,7 +712,6 @@ function renderScores(state) {
     table.appendChild(row);
   });
 
-  // Dummy-Zeile falls noch keine Runde gespielt wurde
   if (!history.length) {
     const emptyRow = document.createElement("div");
     emptyRow.style.padding = "8px";
@@ -729,7 +721,6 @@ function renderScores(state) {
     table.appendChild(emptyRow);
   }
 
-  // 3. ERGEBNIS-ZEILE GANZ UNTEN (Gesamtsumme)
   const totalRow = document.createElement("div");
   totalRow.style.display = "grid";
   totalRow.style.gridTemplateColumns = gridTemplate;
@@ -1228,6 +1219,7 @@ async function playCard(cardId) {
     }
 
     room.turnIndex = (room.turnIndex + 1) % order.length;
+    // FIX: room.message statt fälschlicherweise row.message!
     room.message = `${playerName(room, order[room.turnIndex])} ist am Zug.`;
     return room;
   });
@@ -1274,8 +1266,6 @@ async function nextRound() {
 
 function maybeScheduleBot(state) {
   if (!state) return;
-  
-  // LIVE-CHECK: Sofort stoppen bei Zusammenfassung
   if (state.phase === "round_summary" || state.phase === "finished" || state.roundNo === 0) return;
 
   const order = playerIds(state);
@@ -1283,10 +1273,8 @@ function maybeScheduleBot(state) {
 
   if (!botId || !isBot(state, botId)) return;
 
-  // Verzögerter Start zur Sicherheit vor Race-Conditions
   window.setTimeout(async () => {
     const fresh = roomCache;
-    // CRITICAL LIVE SAFETY DOUBLE-CHECK: Stimmen die Online-Daten exakt überein?
     if (!fresh || fresh.phase === "round_summary" || fresh.phase === "finished" || fresh.roundNo === 0) return;
     
     const currentBotId = currentTurnPlayerId(fresh);
@@ -1355,7 +1343,7 @@ function maybeScheduleBot(state) {
             }
           } else {
             room.turnIndex = (room.turnIndex + 1) % orderNow.length;
-            row.message = `${playerName(room, orderNow[room.turnIndex])} ist am Zug.`;
+            room.message = `${playerName(room, orderNow[room.turnIndex])} ist am Zug.`;
           }
           return room;
         });
