@@ -37,6 +37,7 @@
       </div>
 
       <div class="top-actions">
+        <button id="rulesBtn" class="ghost">Regeln</button>
         <button id="shareBtn" class="ghost">Teilen</button>
         <button id="copyRoomBtn" class="ghost">Code</button>
         <button id="leaveBtn" class="danger hidden">Verlassen</button>
@@ -57,7 +58,7 @@
 
         <div class="leaderboardHead">
           <h3>🏆 Bestenliste</h3>
-          <span>Global</span>
+          <span>Global (Tippe für Details)</span>
         </div>
 
         <div id="leaderboardList" class="leaderboardList">
@@ -343,24 +344,52 @@
     id="roundOverlay"
     class="roundOverlay hidden"
   >
-
     <div class="roundOverlayCard">
-
       <div class="overlayGlow"></div>
-
       <h2>✨ Runde beendet</h2>
-
-      <div
-        id="roundResults"
-        class="roundResults"
-      ></div>
-
+      <div id="roundResults" class="roundResults"></div>
       <button id="closeOverlayBtn" class="secondary" style="margin-top: 15px; width: 100%;">
         Ergebnisse schließen
       </button>
-
     </div>
+  </div>
 
+  <div id="rulesOverlay" class="roundOverlay hidden">
+    <div class="roundOverlayCard" style="max-width: 320px;">
+      <h2>⚙️ Spielregeln & Optionen</h2>
+      <div style="margin: 20px 0; display: flex; flex-direction: column; gap: 15px; text-align: left;">
+        <label style="display: flex; align-items: center; gap: 10px; color: #fff; cursor: pointer; font-size: 0.95rem;">
+          <input id="fastGameCheckbox" type="checkbox" style="width: 18px; height: 18px; cursor: pointer;" />
+          <div>
+            <strong>Schnelles Spiel</strong>
+            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">Kein Rundenende-Popup, automatischer Übergang nach 4 Sek.</div>
+          </div>
+        </label>
+      </div>
+      <p id="rulesHostHint" style="font-size: 0.8rem; color: #ef4444; text-align: center; margin-bottom: 10px; display: none;">Nur der Host kann Optionen ändern.</p>
+      <button id="closeRulesBtn" class="secondary" style="width: 100%; padding: 10px; border-radius: 8px;">Schließen</button>
+    </div>
+  </div>
+
+  <div id="statsOverlay" class="roundOverlay hidden">
+    <div class="roundOverlayCard" style="max-width: 300px; text-align: center;">
+      <h2 id="statsPlayerName" style="color: #ca8a04;">🏆 Spieler-Profil</h2>
+      <div style="margin: 20px 0; display: flex; flex-direction: column; gap: 12px; background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px;">
+        <div style="display: flex; justify-content: space-between; font-size: 0.95rem;">
+          <span style="color: var(--text-muted);">Absolvierte Spiele:</span>
+          <strong id="statsGamesPlayed" style="color: #fff;">0</strong>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 0.95rem;">
+          <span style="color: var(--text-muted);">Gesamtsiege:</span>
+          <strong id="statsWins" style="color: #ca8a04;">0 🏆</strong>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 0.95rem;">
+          <span style="color: var(--text-muted);">Winrate:</span>
+          <strong id="statsWinRate" style="color: #10b981; font-weight: bold;">0%</strong>
+        </div>
+      </div>
+      <button id="closeStatsBtn" class="secondary" style="width: 100%; padding: 10px; border-radius: 8px;">Schließen</button>
+    </div>
   </div>
 
   <script
