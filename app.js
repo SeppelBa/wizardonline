@@ -80,7 +80,7 @@ const els = {
   rulesBtn: document.getElementById("rulesBtn"),
   rulesOverlay: document.getElementById("rulesOverlay"),
   fastGameCheckbox: document.getElementById("fastGameCheckbox"),
-  anniversaryCheckbox: document.getElementById("anniversaryCheckbox"), // Element registriert
+  anniversaryCheckbox: document.getElementById("anniversaryCheckbox"),
   closeRulesBtn: document.getElementById("closeRulesBtn"),
   rulesHostHint: document.getElementById("rulesHostHint"),
   statsOverlay: document.getElementById("statsOverlay"),
@@ -750,7 +750,6 @@ function renderRoom(state) {
     }
   }
 
-  // Checkbox-Haken und Hoster-Listener verknüpfen
   if (els.anniversaryCheckbox) {
     els.anniversaryCheckbox.checked = !!state.anniversaryCards;
     els.anniversaryCheckbox.disabled = !meIsHost;
@@ -1001,29 +1000,38 @@ function renderScores(state) {
 function makeCardElement(card, showPlayerTag = false, playerTag = "") {
   const el = document.createElement("div");
   
+  // 1. Richtige CSS-Klasse für die Hintergrundfarben ermitteln
   let cls = "";
+  if (card.kind === "wizard") cls = "specialWizard";
+  else if (card.kind === "jester") cls = "specialJester";
+  else if (["dragon", "pixie", "bomb", "werewolf", "cloud", "juggler", "shapeshifter"].includes(card.kind)) {
+    cls = `special-${card.kind}`; // Verknüpft die Klassen aus deiner style.css
+  } else {
+    cls = SUIT_BY_KEY[card.suit]?.css || "";
+  }
+  el.className = `card ${cls}`;
+  
+  // 2. Symbole und Texte für die Jubiläumskarten festlegen
+  const suit = SUIT_BY_KEY[card.suit];
   let top = "";
   let mid = "";
   let bot = "";
   
-  if (card.kind === "wizard") { cls = "specialWizard"; top = "🪄"; mid = "Zauberer"; }
-  else if (card.kind === "jester") { cls = "specialJester"; top = "🎭"; mid = "Narr"; }
-  else if (card.kind === ANNIVERSARY_KINDS.DRAGON) { cls = "specialDragon"; top = "🐉"; mid = "Drache"; }
-  else if (card.kind === ANNIVERSARY_KINDS.PIXIE) { cls = "specialPixie"; top = "🧚"; mid = "Fee"; }
-  else if (card.kind === ANNIVERSARY_KINDS.BOMB) { cls = "specialBomb"; top = "💣"; mid = "Bombe"; }
-  else if (card.kind === ANNIVERSARY_KINDS.WEREWOLF) { cls = "specialWerewolf"; top = "🐺"; mid = "Werwolf"; }
-  else if (card.kind === ANNIVERSARY_KINDS.JUGGLER) { cls = "specialJuggler"; top = "🤹"; mid = `Jongleur (${card.suit ? SUIT_BY_KEY[card.suit]?.short : '?'})`; }
-  else if (card.kind === ANNIVERSARY_KINDS.CLOUD) { cls = "specialCloud"; top = "☁️"; mid = `Wolke (${card.suit ? SUIT_BY_KEY[card.suit]?.short : '?'})`; }
-  else if (card.kind === ANNIVERSARY_KINDS.SHAPESHIFTER) { cls = "specialShapeshifter"; top = "🧬"; mid = `Gestaltenw. (${card.currentRole === 'wizard' ? 'Zauberer' : 'Narr'})`; }
+  if (card.kind === "wizard") { top = "🪄"; mid = "Zauberer"; }
+  else if (card.kind === "jester") { top = "🎭"; mid = "Narr"; }
+  else if (card.kind === "dragon") { top = "🐉"; mid = "Drache"; }
+  else if (card.kind === "pixie") { top = "🧚"; mid = "Fee"; }
+  else if (card.kind === "bomb") { top = "💣"; mid = "Bombe"; }
+  else if (card.kind === "werewolf") { top = "🐺"; mid = "Werwolf"; }
+  else if (card.kind === "juggler") { top = "🤹"; mid = `Jongleur (${suit ? suit.short : '7.5'})`; bot = suit ? suit.label : ""; }
+  else if (card.kind === "cloud") { top = "☁️"; mid = `Wolke (${suit ? suit.short : '9.75'})`; bot = suit ? suit.label : ""; }
+  else if (card.kind === "shapeshifter") { top = "🧬"; mid = `Gestaltenw. (${card.currentRole === 'wizard' ? 'Z' : 'N'})`; }
   else {
-    cls = SUIT_BY_KEY[card.suit]?.css || "";
-    const suit = SUIT_BY_KEY[card.suit];
     top = suit ? suit.short : "?";
     mid = card.rank;
     bot = suit ? suit.label : "";
   }
   
-  el.className = `card ${cls}`;
   el.innerHTML = `
     <div class="top"><span>${top}</span><span>${showPlayerTag && playerTag ? escapeHtml(playerTag) : ""}</span></div>
     <div class="mid">${escapeHtml(String(mid))}</div>
@@ -1636,7 +1644,6 @@ function maybeScheduleBot(state) {
           if (!actual) return room;
           if (!isLegalPlay(actual, handNow, room.currentTrick || [], room.trumpSuit)) return room;
 
-          // Automatisches Rollen-Zuweisen für flüssiges Mobile-Gameplay für den Bot
           const wantTrick = (room.tricksTaken[currentBotId] || 0) < (room.bids[currentBotId] || 0);
           if (actual.kind === ANNIVERSARY_KINDS.SHAPESHIFTER) actual.currentRole = wantTrick ? "wizard" : "jester";
           if (actual.kind === ANNIVERSARY_KINDS.JUGGLER || actual.kind === ANNIVERSARY_KINDS.CLOUD) actual.suit = room.trumpSuit || SUITS[0].key;
@@ -1658,7 +1665,6 @@ function maybeScheduleBot(state) {
               }
             }
 
-            // JONGLEUR-EFFEKT: Handkarten im Uhrzeigersinn weitergeben
             const hasJuggler = room.currentTrick.some(p => p.card.kind === ANNIVERSARY_KINDS.JUGGLER);
             if (hasJuggler && room.trickCount + 1 < room.roundNo) {
               let savedCards = {};
@@ -1674,7 +1680,6 @@ function maybeScheduleBot(state) {
             room.turnIndex = winnerId === "bomb_exploded" ? room.turnIndex : orderNow.indexOf(winnerId);
             
             if (room.trickCount >= room.roundNo) {
-              // WOLKEN-EFFEKT: Korrektur am Rundenende
               if (room.cloudWinnerId) {
                 const cid = room.cloudWinnerId;
                 if (room.tricksTaken[cid] !== room.bids[cid]) {
@@ -1736,7 +1741,6 @@ if (els.fastGameCheckbox) {
   });
 }
 
-// Firebase-Datenabgleich für die Jubiläums-Karten-Option
 if (els.anniversaryCheckbox) {
   els.anniversaryCheckbox.addEventListener("change", async () => {
     if (!roomCache || roomCache.hostId !== currentPlayerId) return;
