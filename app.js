@@ -228,12 +228,24 @@ function cardStrength(card, trumpSuit, ledSuit) {
   return v;
 }
 
+// FIX: Wenn die ALLERERSTE Karte im Stich ein Zauberer oder Narr ist, gibt es KEINE anzuspielende Farbe!
 function getLedSuit(trick) {
-  for (const play of trick || []) {
-    if (play.card?.kind === "wizard") return { wizardLed: true, ledSuit: null };
-    if (play.card?.kind === "card") return { wizardLed: false, ledSuit: play.card.suit };
+  if (!trick || trick.length === 0) return { wizardLed: false, ledSuit: null };
+  
+  const firstPlay = trick[0];
+  if (firstPlay.card?.kind === "wizard") {
+    return { wizardLed: true, ledSuit: null };
   }
-  return { wizardLed: false, ledSuit: null };
+  if (firstPlay.card?.kind === "jester") {
+    // Falls die erste Karte ein Narr ist, entscheidet die nächste normale Karte die Farbe
+    for (const play of trick) {
+      if (play.card?.kind === "wizard") return { wizardLed: true, ledSuit: null };
+      if (play.card?.kind === "card") return { wizardLed: false, ledSuit: play.card.suit };
+    }
+    return { wizardLed: false, ledSuit: null };
+  }
+  
+  return { wizardLed: false, ledSuit: firstPlay.card?.suit || null };
 }
 
 function legalCards(hand, trick, trumpSuit) {
@@ -257,8 +269,8 @@ function determineTrickWinner(trick, trumpSuit) {
   const allJesters = trick.every(play => play.card.kind === "jester");
   if (allJesters) return trick[0].playerId;
 
-  const led = trick.find(play => play.card.kind === "card");
-  const ledSuit = led?.card?.suit || null;
+  const info = getLedSuit(trick);
+  const ledSuit = info.ledSuit;
 
   const trumpPlays = trumpSuit
     ? trick.filter(play => play.card.kind === "card" && play.card.suit === trumpSuit)
@@ -615,7 +627,6 @@ function renderRoom(state) {
     ? `Gewinner: ${state.winnerId ? playerName(state, state.winnerId) : "—"}`
     : "";
     
-  // MEISTER-FIX: Das Pop-up öffnet sich jetzt sowohl bei Rundenende als auch bei Spielende!
   const isSummary = state.phase === "round_summary";
   const isFinished = state.phase === "finished";
   
@@ -841,7 +852,6 @@ function showToast(text) {
   }, 2600);
 }
 
-// DYNAMISCHES MEISTER-POPUP
 function showRoundOverlay(state) {
   if (!state) return;
 
@@ -850,7 +860,6 @@ function showRoundOverlay(state) {
   const isFinished = state.phase === "finished";
   const titleEl = els.roundOverlay.querySelector("h2");
   
-  // Titel dynamisch anpassen: Fette Siegerehrung bei Spielende!
   if (isFinished) {
     const winner = highestScoreWinner(state);
     if (titleEl) {
@@ -882,10 +891,9 @@ function showRoundOverlay(state) {
   rows.forEach((r, index) => {
     const div = document.createElement("div");
     
-    // Farbliches Highlight anpassen
     let rowClass = r.correct ? "success" : "fail";
     if (isFinished) {
-      rowClass = index === 0 ? "success" : ""; // Der König bekommt das grüne Meister-Highlight
+      rowClass = index === 0 ? "success" : "";
     }
     
     div.className = `roundPlayer ${rowClass}`;
