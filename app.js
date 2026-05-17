@@ -671,9 +671,10 @@ function renderRoom(state) {
   const isSummary = state.phase === "round_summary";
   const isFinished = state.phase === "finished";
   
-  els.nextRoundBtn.classList.toggle("hidden", !(isSummary || isFinished));
-  els.nextRoundBtn.disabled = !((isSummary || isFinished) && state.hostId === currentPlayerId);
-  els.nextRoundBtn.textContent = isSummary ? "Nächste Runde starten" : "Neues Spiel";
+  // ANPASSUNG: Der Button wird unten NUR NOCH im "Spiel beendet"-Zustand gebraucht (für "Neues Spiel")
+  els.nextRoundBtn.classList.toggle("hidden", !isFinished);
+  els.nextRoundBtn.disabled = !(isFinished && state.hostId === currentPlayerId);
+  els.nextRoundBtn.textContent = "Neues Spiel";
 
   maybeScheduleBot(state);
 }
@@ -704,6 +705,26 @@ function renderBids(state) {
 
 function renderTrick(state) {
   els.trickTable.innerHTML = "";
+  
+  // ANPASSUNG: Wenn die Runde um ist (round_summary), rendern wir den Host-Button zentral im Stichfeld!
+  if (state.phase === "round_summary") {
+    if (state.hostId === currentPlayerId) {
+      // Wenn ich der Host bin, erstelle den interaktiven Button direkt im Stichfeld
+      const btn = document.createElement("button");
+      btn.textContent = "Nächste Runde starten";
+      btn.style.padding = "14px 28px";
+      btn.style.fontSize = "1.05rem";
+      btn.style.borderRadius = "18px";
+      btn.style.animation = "cardFloat 3s ease-in-out infinite"; // Verwendet deine schwebende Kartenanimation!
+      btn.addEventListener("click", nextRound);
+      els.trickTable.appendChild(btn);
+    } else {
+      // Wenn ich ein normaler Spieler bin, sehe ich einen zentrierten Statustext im Kasten
+      els.trickTable.innerHTML = `<div class="hint" style="font-size:1rem; font-weight:600; color:var(--primary);">Warten auf Host für nächste Runde...</div>`;
+    }
+    return;
+  }
+
   const trick = currentTrick(state);
   if (!trick.length) {
     els.trickTable.innerHTML = `<div class="hint">Noch keine Karten im Stich.</div>`;
