@@ -67,7 +67,6 @@ const els = {
   closeOverlayBtn: document.getElementById("closeOverlayBtn"),
   leaderboardList: document.getElementById("leaderboardList"),
   toastContainer: document.getElementById("toastContainer"),
-  musicBtn: document.getElementById("musicBtn") // Sauber registriert
 };
 
 const LOCAL = {
@@ -385,6 +384,7 @@ function initializeGame(room) {
   const order = playerIds(room);
   const n = order.length;
   room.roundNo = 1;
+  // Limitierung für 2 Spieler auf maximal 20 Runden angepasst (60 Karten / 2 Spieler = 30, aber offiziell 20 Runden Limit bei 2 Personen)
   room.maxRound = n === 2 ? 20 : Math.floor(60 / n);
   room.dealerIndex = 0;
   room.hostId = room.hostId || order[0];
@@ -560,6 +560,7 @@ function renderRoom(state) {
   renderHand(state);
   renderScores(state);
 
+  // Validierung auf MIN_PLAYERS (2) herabgesenkt
   els.startBtn.disabled = !(meIsHost && state.phase === "lobby" && order.length >= MIN_PLAYERS && order.length <= MAX_PLAYERS);
   els.resetBtn.disabled = !meIsHost && state.phase !== "lobby";
   els.addBotBtn.disabled = !(meIsHost && state.phase === "lobby");
@@ -573,6 +574,7 @@ function renderRoom(state) {
     const options = validBidOptions(state, currentPlayerId);
     els.bidHint.textContent = `Erlaubt: ${options.join(", ")}`;
     
+    // Zähler zurücksetzen falls er außerhalb der Optionen liegt
     if (currentSelectedBid > roundSize(state)) {
       currentSelectedBid = 0;
     }
@@ -1165,6 +1167,7 @@ async function addBot(count = 1) {
 
 async function fillBotsTo3() {
   if (!roomCache || roomCache.hostId !== currentPlayerId || roomCache.phase !== "lobby") return;
+  // Füllt auf 3 Spieler auf, falls weniger da sind. Wenn schon 2-3 da sind, passiert nichts.
   const missing = Math.max(0, 3 - playerIds(roomCache).length);
   await addBot(Math.min(missing, MAX_PLAYERS - playerIds(roomCache).length));
 }
@@ -1220,7 +1223,7 @@ async function sendBid() {
       return room;
     });
     
-    currentSelectedBid = 0;
+    currentSelectedBid = 0; // Nach Absenden für die nächste Runde resetten
 
   } catch (error) {
     alert("KRITISCHER FIREBASE FEHLER: " + error.message);
@@ -1295,7 +1298,7 @@ async function nextRound() {
       room.trumpCard = null;
       room.trumpSuit = null;
       room.pendingTrumpChoiceSeat = null;
-      const winnerId = null;
+      room.winnerId = null;
       room.message = "Neue Partie bereit.";
       return room;
     }
@@ -1477,40 +1480,5 @@ window.addEventListener("beforeunload", () => {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && document.activeElement === els.nameInput || e.key === "Enter" && document.activeElement === els.roomInput) {
     if (els.gameView.classList.contains("hidden")) joinOrCreateRoom(false);
-  }
-});
-
-// ==========================================
-// HIER STARTET DER AUDIO/MUSIK EXTENSION-BLOCK
-// ==========================================
-const audioEl = document.getElementById("bgMusic");
-if (audioEl) {
-  audioEl.volume = 0.20; // Etwas leiser eingestellt (20%)
-}
-
-els.musicBtn.addEventListener("click", () => {
-  if (!audioEl) {
-    alert("Fehler: Das Audio-Element wurde im HTML nicht gefunden!");
-    return;
-  }
-
-  if (audioEl.error) {
-    alert("Audio-Ladefehler Code: " + audioEl.error.code + ". Versuche die Seite neu zu laden.");
-    return;
-  }
-
-  if (audioEl.paused) {
-    audioEl.play()
-      .then(() => {
-        els.musicBtn.textContent = "⏸️ Musik stoppen";
-        showToast("Musik gestartet 🎵");
-      })
-      .catch(err => {
-        console.error("Audio-Wiedergabe fehlgeschlagen:", err);
-        alert("Browser blockiert die Musik! Bitte klicke zuerst einmal irgendwo auf das Spielfeld (z.B. Name eingeben oder Raum beitreten) und drücke dann nochmal auf 'Musik starten'.");
-      });
-  } else {
-    audioEl.pause();
-    els.musicBtn.textContent = "🎵 Musik starten";
   }
 });
