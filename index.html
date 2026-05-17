@@ -37,6 +37,7 @@
       </div>
 
       <div class="top-actions">
+        <button id="settingsBtn" class="ghost hidden" style="font-size: 1.2rem; padding: 6px 10px;">⚙️</button>
         <button id="shareBtn" class="ghost">Teilen</button>
         <button id="copyRoomBtn" class="ghost">Code</button>
         <button id="leaveBtn" class="danger hidden">Verlassen</button>
@@ -174,11 +175,6 @@
 
             </div>
 
-          </div>
-
-          <div style="margin: 12px 4px; display: flex; align-items: center; gap: 8px; color: #fff;">
-            <input type="checkbox" id="anniversaryCheck" style="width: auto; margin: 0; cursor: pointer;">
-            <label for="anniversaryCheck" style="font-size: 0.85rem; cursor: pointer; -webkit-user-select: none; user-select: none; color: var(--text-muted);">🃏 Jubiläums-Sonderkarten</label>
           </div>
 
           <div id="playersList" class="players"></div>
@@ -366,6 +362,25 @@
 
     </div>
 
+  </div>
+
+  <div id="settingsOverlay" class="roundOverlay hidden">
+    <div class="roundOverlayCard" style="max-width: 320px;">
+      <div class="overlayGlow"></div>
+      <h2 style="margin-bottom: 20px;">⚙️ Einstellungen</h2>
+      
+      <div style="display: flex; align-items: center; justify-content: space-between; width: 100%; margin: 15px 0; background: rgba(255,255,255,0.03); padding: 12px; border-radius: 8px;">
+        <span style="font-size: 0.95rem; font-weight: 500; color: #fff;">Jubiläums-Sonderkarten</span>
+        <label class="switch">
+          <input type="checkbox" id="anniversaryCheck">
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <button id="closeSettingsBtn" style="margin-top: 15px; width: 100%;">
+        Speichern & Schließen
+      </button>
+    </div>
   </div>
 
   <script
