@@ -86,7 +86,6 @@ let roomUnsub = null;
 let roomCache = null;
 let overlayAlreadyShown = false;
 let currentSelectedBid = 0; // Interner Zähler für das neue Klick-System
-let isTrickResolutionActive = false; // Blockiert Klicks während der Gedenksekunde
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js").catch(() => {});
@@ -274,16 +273,20 @@ function determineTrickWinner(trick, trumpSuit) {
   const hasDragon = trick.some(play => play.card.kind === "dragon");
   const hasPixie = trick.some(play => play.card.kind === "pixie");
 
+  // REGEL-AUSNAHME: Liegen Fee UND Drache in einem Stich, gewinnt die Fee!
   if (hasDragon && hasPixie) {
     return trick.find(play => play.card.kind === "pixie").playerId;
   }
 
+  // Normaler Drache: Ohne Fee gewinnt er sofort jeden Stich
   const firstDragon = trick.find(play => play.card.kind === "dragon");
   if (firstDragon) return firstDragon.playerId;
 
+  // Wenn kein Drache greift, gewinnt der erste Zauberer
   const firstWizard = trick.find(play => play.card.kind === "wizard");
   if (firstWizard) return firstWizard.playerId;
 
+  // Wenn der Stich nur aus Narren und Feen besteht, gewinnt die allererste Karte
   const allLow = trick.every(play => play.card.kind === "jester" || play.card.kind === "pixie");
   if (allLow) return trick[0].playerId;
 
@@ -299,6 +302,7 @@ function determineTrickWinner(trick, trumpSuit) {
     : trick.filter(play => play.card.kind === "card" && play.card.suit === ledSuit);
 
   if (!candidates.length) {
+    // Wenn keine passende Farbkarte bedient wurde, gewinnt der erste Narr (Feen verlieren ja immer)
     return trick.find(play => play.card.kind === "jester")?.playerId || trick[0].playerId;
   }
 
@@ -378,8 +382,11 @@ function buildRoundState(room, roundNo) {
   const dealerIndex = roundDealerIndex(room, roundNo);
   const leaderIndex = (dealerIndex + 1) % order.length;
   
+  // Wenn Drache oder Zauberer aufgedeckt werden -> Geber wählt Trumpf
   const isTrumpChoice = (trumpCard?.kind === "wizard" || trumpCard?.kind === "dragon");
   const phase = isTrumpChoice ? "choose_trump" : "bidding";
+  
+  // Wenn die Fee aufgedeckt wird, gibt es KEINEN Trumpf. Sonst falls Farbkarte.
   const trumpSuit = (trumpCard?.kind === "card") ? trumpCard.suit : null;
 
   const tricksTaken = {};
@@ -530,7 +537,7 @@ function showJoinView(show) {
   els.joinView.classList.toggle("hidden", !show);
   els.gameView.classList.toggle("hidden", show);
   els.leaveBtn.classList.toggle("hidden", show);
-  els.settingsBtn?.classList.toggle("hidden", show);
+  els.settingsBtn?.classList.toggle("hidden", show); // Zahnrad nur im aktiven Spielraum anzeigen
   if (show) {
     fetchGlobalLeaderboard();
   }
@@ -545,7 +552,6 @@ function setStatusText(state) {
   els.dealerLabel.textContent = state ? playerName(state, dealerPlayerId(state)) : "—";
 }
 
-// ... Restliche unveränderte Hilfsfunktionen (nicePhase, renderTrump, etc.) ...
 function nicePhase(phase) {
   const map = {
     lobby: "Lobby",
@@ -578,6 +584,7 @@ function renderRoom(state) {
   order.forEach((id, index) => {
     const p = state.players[id];
     
+    // ANPASSUNG: Spielerliste bleibt wieder sauber und schlank – ohne die Stiche dazwischen
     const row = document.createElement("div");
     row.className = "playerRow";
     row.innerHTML = `
@@ -630,7 +637,7 @@ function renderRoom(state) {
           : `Lobby.`);
 
   els.handHint.textContent = state.phase === "playing"
-    ? (currentTurn === currentPlayerId ? (isTrickResolutionActive ? "Stich wird ausgewertet..." : "Du bist dran. Tippe eine Karte.") : `Warten auf ${playerName(state, currentTurn)}.`)
+    ? (currentTurn === currentPlayerId ? "Du bist dran. Tippe eine Karte." : `Warten auf ${playerName(state, currentTurn)}.`)
     : state.phase === "bidding"
       ? (currentTurn === currentPlayerId ? "Du musst deine Ansage senden." : `Warten auf ${playerName(state, currentTurn)}.`)
       : state.phase === "choose_trump"
@@ -664,6 +671,7 @@ function renderRoom(state) {
   const isSummary = state.phase === "round_summary";
   const isFinished = state.phase === "finished";
   
+  // ANPASSUNG: Der Button wird unten NUR NOCH im "Spiel beendet"-Zustand gebraucht (für "Neues Spiel")
   els.nextRoundBtn.classList.toggle("hidden", !isFinished);
   els.nextRoundBtn.disabled = !(isFinished && state.hostId === currentPlayerId);
   els.nextRoundBtn.textContent = "Neues Spiel";
@@ -671,6 +679,7 @@ function renderRoom(state) {
   maybeScheduleBot(state);
 }
 
+// ANPASSUNG: Die getippten und gemachten Stiche erscheinen jetzt hier als "Ansage / Gemacht" im Spielstatus-Kasten
 function renderBids(state) {
   els.bidsList.innerHTML = "";
   const order = playerIds(state);
@@ -681,9 +690,9 @@ function renderBids(state) {
     let statusDisplay = "—";
     if (bid !== null && bid !== undefined) {
       if (state.phase === "playing" || state.phase === "round_summary") {
-        statusDisplay = `${bid} / ${taken}`;
+        statusDisplay = `${bid} / ${taken}`; // Format: Ansage / Gemacht
       } else {
-        statusDisplay = bid;
+        statusDisplay = bid; // In der reinen Tipp-Phase nur die Ansage zeigen
       }
     }
 
@@ -697,17 +706,20 @@ function renderBids(state) {
 function renderTrick(state) {
   els.trickTable.innerHTML = "";
   
+  // ANPASSUNG: Wenn die Runde um ist (round_summary), rendern wir den Host-Button zentral im Stichfeld!
   if (state.phase === "round_summary") {
     if (state.hostId === currentPlayerId) {
+      // Wenn ich der Host bin, erstelle den interaktiven Button direkt im Stichfeld
       const btn = document.createElement("button");
       btn.textContent = "Nächste Runde starten";
       btn.style.padding = "14px 28px";
       btn.style.fontSize = "1.05rem";
       btn.style.borderRadius = "18px";
-      btn.style.animation = "cardFloat 3s ease-in-out infinite";
+      btn.style.animation = "cardFloat 3s ease-in-out infinite"; // Verwendet deine schwebende Kartenanimation!
       btn.addEventListener("click", nextRound);
       els.trickTable.appendChild(btn);
     } else {
+      // Wenn ich ein normaler Spieler bin, sehe ich einen zentrierten Statustext im Kasten
       els.trickTable.innerHTML = `<div class="hint" style="font-size:1rem; font-weight:600; color:var(--primary);">Warten auf Host für nächste Runde...</div>`;
     }
     return;
@@ -718,6 +730,7 @@ function renderTrick(state) {
     els.trickTable.innerHTML = `<div class="hint">Noch keine Karten im Stich.</div>`;
     return;
   }
+  // ANPASSUNG: Holt den Spielernamen und übergibt ihn an makeCardElement für das Namensschild
   trick.forEach(play => {
     const pName = playerName(state, play.playerId);
     els.trickTable.appendChild(makeCardElement(play.card, play.playerId === currentPlayerId, pName));
@@ -756,13 +769,13 @@ function renderHand(state) {
   const legal = legalCards(hand, currentTrick(state), state.trumpSuit);
   const legalIds = new Set(legal.map(c => c.id));
   const myTurn = currentTurnPlayerId(state) === currentPlayerId;
-  const playable = state.phase === "playing" && myTurn && !isTrickResolutionActive;
+  const playable = state.phase === "playing" && myTurn;
 
   hand.forEach(card => {
     const el = makeCardElement(card, true);
     const allowed = legalIds.has(card.id);
     el.classList.toggle("clickable", playable && allowed);
-    el.classList.toggle("disabled", (playable && !allowed) || isTrickResolutionActive);
+    el.classList.toggle("disabled", playable && !allowed);
     if (playable && allowed) {
       el.addEventListener("click", () => playCard(card.id));
     }
@@ -870,6 +883,7 @@ function makeCardElement(card, showPlayerTag = false, playerTag = "") {
   else if (card.kind === "dragon") top = "🐉";
   else if (card.kind === "pixie") top = "🧚";
 
+  // ANPASSUNG: Rendert das Namensschild über die Klasse .cardOwnerTag, falls playerTag übergeben wurde (im Stichfeld)
   el.innerHTML = `
     <div class="top"><span>${top}</span>${playerTag ? `<span class="cardOwnerTag">${escapeHtml(playerTag)}</span>` : ""}</div>
     <div class="mid">${escapeHtml(String(card.label))}</div>
@@ -914,6 +928,7 @@ function showRoundOverlay(state) {
       const p = state.players[id];
       const bid = state.bids?.[id] ?? 0;
       const took = state.tricksTaken?.[id] || 0;
+
       const correct = bid === took;
 
       return {
@@ -932,9 +947,18 @@ function showRoundOverlay(state) {
 
     div.innerHTML = `
       <div class="roundRank">#${index + 1}</div>
-      <div class="roundName">${escapeHtml(r.name)}</div>
-      <div class="roundStats">Ansage ${r.bid} · Stich ${r.took}</div>
-      <div class="roundScore">${r.score} P</div>
+
+      <div class="roundName">
+        ${escapeHtml(r.name)}
+      </div>
+
+      <div class="roundStats">
+        Ansage ${r.bid} · Stich ${r.took}
+      </div>
+
+      <div class="roundScore">
+        ${r.score} P
+      </div>
     `;
 
     els.roundResults.appendChild(div);
@@ -1259,15 +1283,18 @@ async function chooseTrumpSuit(suitKey) {
 
 async function sendBid() {
   if (!roomCache) return;
+  
   const bidValue = currentSelectedBid;
   const roomReference = roomRef(currentRoomCode);
   
   try {
     await runTransaction(roomReference, room => {
       if (!room || room.phase !== "bidding") return room;
+      
       const order = playerIds(room);
       const bidderId = currentTurnPlayerId(room);
       if (bidderId !== currentPlayerId) return room;
+      
       const allowed = validBidOptions(room, currentPlayerId);
       if (!allowed.includes(bidValue)) return room;
       
@@ -1288,17 +1315,17 @@ async function sendBid() {
       room.message = `Warten auf Ansage von ${playerName(room, room.order[room.turnIndex])}`;
       return room;
     });
+    
     currentSelectedBid = 0;
+
   } catch (error) {
     alert("KRITISCHER FIREBASE FEHLER: " + error.message);
   }
 }
 
-// ANPASSUNG: Fehlerhafter Teufelskreis am Rundenende behoben!
 async function playCard(cardId) {
-  if (!roomCache || isTrickResolutionActive) return;
+  if (!roomCache) return;
   const roomReference = roomRef(currentRoomCode);
-  
   await runTransaction(roomReference, room => {
     if (!room || room.phase !== "playing") return room;
     const order = playerIds(room);
@@ -1316,44 +1343,22 @@ async function playCard(cardId) {
       card
     });
 
-    // Wenn der Stich durch diesen Zug vollzählig wird
     if (room.currentTrick.length >= order.length) {
       const winnerId = determineTrickWinner(room.currentTrick, room.trumpSuit);
-      const nextTrickCount = (room.trickCount || 0) + 1;
+      room.tricksTaken[winnerId] = (room.tricksTaken[winnerId] || 0) + 1;
+      room.trickCount = (room.trickCount || 0) + 1;
+      room.currentTrick = [];
+      room.turnIndex = order.indexOf(winnerId);
 
-      // ENTSCHEIDUNG: Ist es der absolut LETZTE Stich der kompletten Runde?
-      if (nextTrickCount >= room.roundNo) {
-        // Bei Rundenende werten wir SOFORT aus – kein asynchroner Timer, der Firebase einfrieren lässt!
-        room.tricksTaken[winnerId] = (room.tricksTaken[winnerId] || 0) + 1;
-        room.trickCount = nextTrickCount;
-        room.currentTrick = [];
-        room.turnIndex = order.indexOf(winnerId);
-        room = finishRoundAndMaybeNext(room); // Wechselt sauber in "round_summary"
-        return room;
+      if (room.trickCount >= room.roundNo) {
+        room = finishRoundAndMaybeNext(room);
       } else {
-        // Ein normaler Stich mitten in der Runde -> Hier nutzen wir sicher die 1,2 Sekunden Gedenksekunde!
-        isTrickResolutionActive = true; 
         room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
-        
-        setTimeout(async () => {
-          const delayedReference = roomRef(currentRoomCode);
-          await runTransaction(delayedReference, delayedRoom => {
-            if (!delayedRoom || delayedRoom.phase !== "playing") return delayedRoom;
-            
-            delayedRoom.tricksTaken[winnerId] = (delayedRoom.tricksTaken[winnerId] || 0) + 1;
-            delayedRoom.trickCount = (delayedRoom.trickCount || 0) + 1;
-            delayedRoom.currentTrick = []; 
-            delayedRoom.turnIndex = playerIds(delayedRoom).indexOf(winnerId);
-            delayedRoom.message = `${playerName(delayedRoom, winnerId)} ist am Zug.`;
-            return delayedRoom;
-          });
-          
-          isTrickResolutionActive = false; 
-          showToast(`${playerName(roomCache, winnerId)} gewinnt den Stich`);
-        }, 1200);
-
-        return room;
+        setTimeout(() => {
+          showToast(`${playerName(room, winnerId)} gewinnt den Stich`);
+        }, 50);
       }
+      return room;
     }
 
     room.turnIndex = (room.turnIndex + 1) % order.length;
@@ -1402,7 +1407,7 @@ async function nextRound() {
 }
 
 function maybeScheduleBot(state) {
-  if (!state || isTrickResolutionActive) return;
+  if (!state) return;
   if (state.phase === "round_summary" || state.phase === "finished" || state.roundNo === 0) return;
 
   const order = playerIds(state);
@@ -1412,7 +1417,7 @@ function maybeScheduleBot(state) {
 
   window.setTimeout(async () => {
     const fresh = roomCache;
-    if (!fresh || fresh.phase === "round_summary" || fresh.phase === "finished" || fresh.roundNo === 0 || isTrickResolutionActive) return;
+    if (!fresh || fresh.phase === "round_summary" || fresh.phase === "finished" || fresh.roundNo === 0) return;
     
     const currentBotId = currentTurnPlayerId(fresh);
     if (!currentBotId || !isBot(fresh, currentBotId) || currentBotId !== botId) return;
@@ -1455,7 +1460,7 @@ function maybeScheduleBot(state) {
       const card = botChoosePlay(fresh, currentBotId);
       if (card) {
         await runTransaction(roomRef(currentRoomCode), room => {
-          if (!room || room.phase !== "playing" || isTrickResolutionActive) return room;
+          if (!room || room.phase !== "playing") return room;
           const turnPlayer = currentTurnPlayerId(room);
           if (turnPlayer !== currentBotId) return room;
           const handNow = room.hands?.[currentBotId] || [];
@@ -1470,33 +1475,14 @@ function maybeScheduleBot(state) {
           const orderNow = playerIds(room);
           if (room.currentTrick.length >= orderNow.length) {
             const winnerId = determineTrickWinner(room.currentTrick, room.trumpSuit);
-            const nextTrickCount = (room.trickCount || 0) + 1;
-
-            if (nextTrickCount >= room.roundNo) {
-              // Bot beendet die Runde -> Sofortige Auswertung
-              room.tricksTaken[winnerId] = (room.tricksTaken[winnerId] || 0) + 1;
-              room.trickCount = nextTrickCount;
-              room.currentTrick = [];
-              room.turnIndex = orderNow.indexOf(winnerId);
+            room.tricksTaken[winnerId] = (room.tricksTaken[winnerId] || 0) + 1;
+            room.trickCount = (room.trickCount || 0) + 1;
+            room.currentTrick = [];
+            room.turnIndex = orderNow.indexOf(winnerId);
+            if (room.trickCount >= room.roundNo) {
               room = finishRoundAndMaybeNext(room);
-              return room;
             } else {
-              // Normaler Stich für Bot -> Gedenksekunde aktivieren
-              isTrickResolutionActive = true; 
               room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
-              
-              setTimeout(async () => {
-                await runTransaction(roomRef(currentRoomCode), delayedRoom => {
-                  if (!delayedRoom || delayedRoom.phase !== "playing") return delayedRoom;
-                  delayedRoom.tricksTaken[winnerId] = (delayedRoom.tricksTaken[delayedRoom] || 0) + 1;
-                  delayedRoom.trickCount = (delayedRoom.trickCount || 0) + 1;
-                  delayedRoom.currentTrick = [];
-                  delayedRoom.turnIndex = playerIds(delayedRoom).indexOf(winnerId);
-                  delayedRoom.message = `${playerName(delayedRoom, winnerId)} ist am Zug.`;
-                  return delayedRoom;
-                });
-                isTrickResolutionActive = false;
-              }, 1200);
             }
           } else {
             room.turnIndex = (room.turnIndex + 1) % orderNow.length;
@@ -1545,6 +1531,7 @@ els.leaveBtn.addEventListener("click", leaveRoom);
 els.nextRoundBtn.addEventListener("click", nextRound);
 els.closeOverlayBtn?.addEventListener("click", hideRoundOverlay);
 
+// ANPASSUNG: Event Listener für das Einstellungs-Zahnrad (Pop-up öffnen/schließen)
 els.settingsBtn?.addEventListener("click", () => {
   els.settingsOverlay?.classList.remove("hidden");
 });
