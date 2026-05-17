@@ -86,6 +86,7 @@ let roomUnsub = null;
 let roomCache = null;
 let overlayAlreadyShown = false;
 let currentSelectedBid = 0; // Interner Zähler für das neue Klick-System
+let isTrickResolutionActive = false; // Blockiert Klicks während der Gedenksekunde
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js").catch(() => {});
@@ -637,7 +638,7 @@ function renderRoom(state) {
           : `Lobby.`);
 
   els.handHint.textContent = state.phase === "playing"
-    ? (currentTurn === currentPlayerId ? "Du bist dran. Tippe eine Karte." : `Warten auf ${playerName(state, currentTurn)}.`)
+    ? (currentTurn === currentPlayerId ? (isTrickResolutionActive ? "Stich wird ausgewertet..." : "Du bist dran. Tippe eine Karte.") : `Warten auf ${playerName(state, currentTurn)}.`)
     : state.phase === "bidding"
       ? (currentTurn === currentPlayerId ? "Du musst deine Ansage senden." : `Warten auf ${playerName(state, currentTurn)}.`)
       : state.phase === "choose_trump"
@@ -769,13 +770,13 @@ function renderHand(state) {
   const legal = legalCards(hand, currentTrick(state), state.trumpSuit);
   const legalIds = new Set(legal.map(c => c.id));
   const myTurn = currentTurnPlayerId(state) === currentPlayerId;
-  const playable = state.phase === "playing" && myTurn;
+  const playable = state.phase === "playing" && myTurn && !isTrickResolutionActive;
 
   hand.forEach(card => {
     const el = makeCardElement(card, true);
     const allowed = legalIds.has(card.id);
     el.classList.toggle("clickable", playable && allowed);
-    el.classList.toggle("disabled", playable && !allowed);
+    el.classList.toggle("disabled", (playable && !allowed) || isTrickResolutionActive);
     if (playable && allowed) {
       el.addEventListener("click", () => playCard(card.id));
     }
@@ -1323,9 +1324,11 @@ async function sendBid() {
   }
 }
 
+// ANPASSUNG: playCard wurde um eine Gedenksekunde (2500ms) für den letzten Stich erweitert
 async function playCard(cardId) {
-  if (!roomCache) return;
+  if (!roomCache || isTrickResolutionActive) return;
   const roomReference = roomRef(currentRoomCode);
+  
   await runTransaction(roomReference, room => {
     if (!room || room.phase !== "playing") return room;
     const order = playerIds(room);
@@ -1343,21 +1346,38 @@ async function playCard(cardId) {
       card
     });
 
+    // Wenn der Stich durch die gespielte Karte komplett ist
     if (room.currentTrick.length >= order.length) {
+      isTrickResolutionActive = true; // Aktiviert den lokalen Klick-Schutz
       const winnerId = determineTrickWinner(room.currentTrick, room.trumpSuit);
-      room.tricksTaken[winnerId] = (room.tricksTaken[winnerId] || 0) + 1;
-      room.trickCount = (room.trickCount || 0) + 1;
-      room.currentTrick = [];
-      room.turnIndex = order.indexOf(winnerId);
+      
+      // Bereite die Nachricht vor, wer gewonnen hat, BEVOR die Karten gelöscht werden
+      room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
+      
+      // Verwende setTimeout, um die Auswertung und das Löschen der Karten um 2,5 Sekunden zu verzögern
+      setTimeout(async () => {
+        const delayedReference = roomRef(currentRoomCode);
+        await runTransaction(delayedReference, delayedRoom => {
+          if (!delayedRoom) return delayedRoom;
+          
+          // Führe die Punkteberechnung erst nach Ablauf der Zeit aus
+          delayedRoom.tricksTaken[winnerId] = (delayedRoom.tricksTaken[winnerId] || 0) + 1;
+          delayedRoom.trickCount = (delayedRoom.trickCount || 0) + 1;
+          delayedRoom.currentTrick = []; // Löscht die Karten erst JETZT aus dem Feld
+          delayedRoom.turnIndex = playerIds(delayedRoom).indexOf(winnerId);
 
-      if (room.trickCount >= room.roundNo) {
-        room = finishRoundAndMaybeNext(room);
-      } else {
-        room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
-        setTimeout(() => {
-          showToast(`${playerName(room, winnerId)} gewinnt den Stich`);
-        }, 50);
-      }
+          if (delayedRoom.trickCount >= delayedRoom.roundNo) {
+            delayedRoom = finishRoundAndMaybeNext(delayedRoom);
+          } else {
+            delayedRoom.message = `${playerName(delayedRoom, winnerId)} ist am Zug.`;
+          }
+          return delayedRoom;
+        });
+        
+        isTrickResolutionActive = false; // Schaltet den Klick-Schutz wieder ab
+        showToast(`${playerName(roomCache, winnerId)} gewinnt den Stich`);
+      }, 2500); // 2,5 Sekunden Gedenksekunde
+
       return room;
     }
 
@@ -1407,7 +1427,7 @@ async function nextRound() {
 }
 
 function maybeScheduleBot(state) {
-  if (!state) return;
+  if (!state || isTrickResolutionActive) return;
   if (state.phase === "round_summary" || state.phase === "finished" || state.roundNo === 0) return;
 
   const order = playerIds(state);
@@ -1417,7 +1437,7 @@ function maybeScheduleBot(state) {
 
   window.setTimeout(async () => {
     const fresh = roomCache;
-    if (!fresh || fresh.phase === "round_summary" || fresh.phase === "finished" || fresh.roundNo === 0) return;
+    if (!fresh || fresh.phase === "round_summary" || fresh.phase === "finished" || fresh.roundNo === 0 || isTrickResolutionActive) return;
     
     const currentBotId = currentTurnPlayerId(fresh);
     if (!currentBotId || !isBot(fresh, currentBotId) || currentBotId !== botId) return;
@@ -1460,7 +1480,7 @@ function maybeScheduleBot(state) {
       const card = botChoosePlay(fresh, currentBotId);
       if (card) {
         await runTransaction(roomRef(currentRoomCode), room => {
-          if (!room || room.phase !== "playing") return room;
+          if (!room || room.phase !== "playing" || isTrickResolutionActive) return room;
           const turnPlayer = currentTurnPlayerId(room);
           if (turnPlayer !== currentBotId) return room;
           const handNow = room.hands?.[currentBotId] || [];
@@ -1474,16 +1494,26 @@ function maybeScheduleBot(state) {
 
           const orderNow = playerIds(room);
           if (room.currentTrick.length >= orderNow.length) {
+            isTrickResolutionActive = true; // Aktiviert den Klick-Schutz für Bots
             const winnerId = determineTrickWinner(room.currentTrick, room.trumpSuit);
-            room.tricksTaken[winnerId] = (room.tricksTaken[winnerId] || 0) + 1;
-            room.trickCount = (room.trickCount || 0) + 1;
-            room.currentTrick = [];
-            room.turnIndex = orderNow.indexOf(winnerId);
-            if (room.trickCount >= room.roundNo) {
-              room = finishRoundAndMaybeNext(room);
-            } else {
-              room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
-            }
+            room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
+            
+            setTimeout(async () => {
+              await runTransaction(roomRef(currentRoomCode), delayedRoom => {
+                if (!delayedRoom) return delayedRoom;
+                delayedRoom.tricksTaken[winnerId] = (delayedRoom.tricksTaken[winnerId] || 0) + 1;
+                delayedRoom.trickCount = (delayedRoom.trickCount || 0) + 1;
+                delayedRoom.currentTrick = [];
+                delayedRoom.turnIndex = playerIds(delayedRoom).indexOf(winnerId);
+                if (delayedRoom.trickCount >= delayedRoom.roundNo) {
+                  delayedRoom = finishRoundAndMaybeNext(delayedRoom);
+                } else {
+                  delayedRoom.message = `${playerName(delayedRoom, winnerId)} ist am Zug.`;
+                }
+                return delayedRoom;
+              });
+              isTrickResolutionActive = false;
+            }, 2500);
           } else {
             room.turnIndex = (room.turnIndex + 1) % orderNow.length;
             room.message = `${playerName(room, orderNow[room.turnIndex])} ist am Zug.`;
