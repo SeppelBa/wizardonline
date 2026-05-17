@@ -268,6 +268,7 @@ function isLegalPlay(card, hand, trick, trumpSuit) {
   return legalCards(hand, trick, trumpSuit).some(c => c.id === card.id);
 }
 
+// REGEL-LOGIK FÜR GEWINNER
 function determineTrickWinner(trick, trumpSuit) {
   if (!trick?.length) return null;
 
@@ -1324,7 +1325,7 @@ async function sendBid() {
   }
 }
 
-// ANPASSUNG: playCard wurde um eine Gedenksekunde (2500ms) für den letzten Stich erweitert
+// ANPASSUNG: Gedenksekunde optimiert auf knackige 1200ms (1,2 Sekunden)
 async function playCard(cardId) {
   if (!roomCache || isTrickResolutionActive) return;
   const roomReference = roomRef(currentRoomCode);
@@ -1348,22 +1349,20 @@ async function playCard(cardId) {
 
     // Wenn der Stich durch die gespielte Karte komplett ist
     if (room.currentTrick.length >= order.length) {
-      isTrickResolutionActive = true; // Aktiviert den lokalen Klick-Schutz
+      isTrickResolutionActive = true; // Lokaler Schutz aktiv
       const winnerId = determineTrickWinner(room.currentTrick, room.trumpSuit);
       
-      // Bereite die Nachricht vor, wer gewonnen hat, BEVOR die Karten gelöscht werden
       room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
       
-      // Verwende setTimeout, um die Auswertung und das Löschen der Karten um 2,5 Sekunden zu verzögern
+      // Gedenksekunde auf 1,2 Sekunden (1200ms) gekürzt
       setTimeout(async () => {
         const delayedReference = roomRef(currentRoomCode);
         await runTransaction(delayedReference, delayedRoom => {
           if (!delayedRoom) return delayedRoom;
           
-          // Führe die Punkteberechnung erst nach Ablauf der Zeit aus
           delayedRoom.tricksTaken[winnerId] = (delayedRoom.tricksTaken[winnerId] || 0) + 1;
           delayedRoom.trickCount = (delayedRoom.trickCount || 0) + 1;
-          delayedRoom.currentTrick = []; // Löscht die Karten erst JETZT aus dem Feld
+          delayedRoom.currentTrick = []; // Löscht das Feld erst JETZT
           delayedRoom.turnIndex = playerIds(delayedRoom).indexOf(winnerId);
 
           if (delayedRoom.trickCount >= delayedRoom.roundNo) {
@@ -1374,9 +1373,9 @@ async function playCard(cardId) {
           return delayedRoom;
         });
         
-        isTrickResolutionActive = false; // Schaltet den Klick-Schutz wieder ab
+        isTrickResolutionActive = false; // Schutz aus
         showToast(`${playerName(roomCache, winnerId)} gewinnt den Stich`);
-      }, 2500); // 2,5 Sekunden Gedenksekunde
+      }, 1200); // Knackige 1,2 Sekunden Wartezeit
 
       return room;
     }
@@ -1494,10 +1493,11 @@ function maybeScheduleBot(state) {
 
           const orderNow = playerIds(room);
           if (room.currentTrick.length >= orderNow.length) {
-            isTrickResolutionActive = true; // Aktiviert den Klick-Schutz für Bots
+            isTrickResolutionActive = true; // Klick-Schutz für Bots aktivieren
             const winnerId = determineTrickWinner(room.currentTrick, room.trumpSuit);
             room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
             
+            // Bot-Timeout ebenfalls an die 1,2 Sekunden angepasst
             setTimeout(async () => {
               await runTransaction(roomRef(currentRoomCode), delayedRoom => {
                 if (!delayedRoom) return delayedRoom;
@@ -1513,7 +1513,7 @@ function maybeScheduleBot(state) {
                 return delayedRoom;
               });
               isTrickResolutionActive = false;
-            }, 2500);
+            }, 1200);
           } else {
             room.turnIndex = (room.turnIndex + 1) % orderNow.length;
             room.message = `${playerName(room, orderNow[room.turnIndex])} ist am Zug.`;
@@ -1561,7 +1561,7 @@ els.leaveBtn.addEventListener("click", leaveRoom);
 els.nextRoundBtn.addEventListener("click", nextRound);
 els.closeOverlayBtn?.addEventListener("click", hideRoundOverlay);
 
-// ANPASSUNG: Event Listener für das Einstellungs-Zahnrad (Pop-up öffnen/schließen)
+// Event Listener für das Einstellungs-Zahnrad (Pop-up öffnen/schließen)
 els.settingsBtn?.addEventListener("click", () => {
   els.settingsOverlay?.classList.remove("hidden");
 });
