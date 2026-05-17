@@ -67,7 +67,7 @@ const els = {
   closeOverlayBtn: document.getElementById("closeOverlayBtn"),
   leaderboardList: document.getElementById("leaderboardList"),
   toastContainer: document.getElementById("toastContainer"),
-  musicBtn: document.getElementById("musicBtn") // HIER WAR DER FEHLER: Jetzt sauber registriert!
+  musicBtn: document.getElementById("musicBtn") // Sauber registriert
 };
 
 const LOCAL = {
@@ -1295,7 +1295,7 @@ async function nextRound() {
       room.trumpCard = null;
       room.trumpSuit = null;
       room.pendingTrumpChoiceSeat = null;
-      winnerId = null;
+      const winnerId = null;
       room.message = "Neue Partie bereit.";
       return room;
     }
@@ -1485,19 +1485,29 @@ document.addEventListener("keydown", (e) => {
 // ==========================================
 const audioEl = document.getElementById("bgMusic");
 if (audioEl) {
-  audioEl.volume = 0.25; // Setzt die Grundlautstärke fest
+  audioEl.volume = 0.20; // Etwas leiser eingestellt (20%)
 }
 
 els.musicBtn.addEventListener("click", () => {
-  if (!audioEl) return;
+  if (!audioEl) {
+    alert("Fehler: Das Audio-Element wurde im HTML nicht gefunden!");
+    return;
+  }
+
+  if (audioEl.error) {
+    alert("Audio-Ladefehler Code: " + audioEl.error.code + ". Versuche die Seite neu zu laden.");
+    return;
+  }
 
   if (audioEl.paused) {
     audioEl.play()
       .then(() => {
         els.musicBtn.textContent = "⏸️ Musik stoppen";
+        showToast("Musik gestartet 🎵");
       })
       .catch(err => {
         console.error("Audio-Wiedergabe fehlgeschlagen:", err);
+        alert("Browser blockiert die Musik! Bitte klicke zuerst einmal irgendwo auf das Spielfeld (z.B. Name eingeben oder Raum beitreten) und drücke dann nochmal auf 'Musik starten'.");
       });
   } else {
     audioEl.pause();
