@@ -1336,7 +1336,7 @@ async function playCard(cardId) {
     }
 
     room.turnIndex = (room.turnIndex + 1) % order.length;
-    row.message = `${playerName(room, order[room.turnIndex])} ist am Zug.`;
+    room.message = `${playerName(room, order[room.turnIndex])} ist am Zug.`;
     return room;
   });
 }
