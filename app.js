@@ -583,20 +583,13 @@ function renderRoom(state) {
 
   order.forEach((id, index) => {
     const p = state.players[id];
-    const bid = state.bids?.[id];
     
-    // ANPASSUNG: Übersichtliche Live-Stichanzeige (Ansage: X · Stich: Y) im laufenden Spiel
-    let trickStatusText = `${Number(state.tricksTaken?.[id] || 0)} St.`;
-    if (state.phase === "playing" || state.phase === "round_summary") {
-      trickStatusText = `Ansage: ${bid !== null && bid !== undefined ? bid : "—"} · Stich: ${Number(state.tricksTaken?.[id] || 0)}`;
-    }
-
+    // ANPASSUNG: Spielerliste bleibt wieder sauber und schlank – ohne die Stiche dazwischen
     const row = document.createElement("div");
     row.className = "playerRow";
     row.innerHTML = `
       <div class="name">${escapeHtml(p.name)} ${id === currentPlayerId ? '<span class="badge me">Ich</span>' : ''} ${p.isBot ? '<span class="badge bot">Bot</span>' : ''} ${state.hostId === id ? '<span class="badge host">Host</span>' : ''}</div>
       <div>${Number(p.score || 0)} P</div>
-      <div style="font-size: 0.8rem; color: var(--text-muted); font-weight: 500;">${trickStatusText}</div>
       <div>${currentTurn === id ? (state.phase === "bidding" ? '<span class="badge">Ansage</span>' : '<span class="badge">Zug</span>') : ''}</div>
     `;
     els.playersList.appendChild(row);
@@ -685,14 +678,26 @@ function renderRoom(state) {
   maybeScheduleBot(state);
 }
 
+// ANPASSUNG: Die getippten und gemachten Stiche erscheinen jetzt hier als "Ansage / Gemacht" im Spielstatus-Kasten
 function renderBids(state) {
   els.bidsList.innerHTML = "";
   const order = playerIds(state);
   order.forEach((id) => {
     const bid = state.bids?.[id];
+    const taken = state.tricksTaken?.[id] || 0;
+    
+    let statusDisplay = "—";
+    if (bid !== null && bid !== undefined) {
+      if (state.phase === "playing" || state.phase === "round_summary") {
+        statusDisplay = `${bid} / ${taken}`; // Format: Ansage / Gemacht
+      } else {
+        statusDisplay = bid; // In der reinen Tipp-Phase nur die Ansage zeigen
+      }
+    }
+
     const row = document.createElement("div");
     row.className = "listItem";
-    row.innerHTML = `<span>${escapeHtml(playerName(state, id))}</span><strong>${bid === null || bid === undefined ? "—" : bid}</strong>`;
+    row.innerHTML = `<span>${escapeHtml(playerName(state, id))}</span><strong>${statusDisplay}</strong>`;
     els.bidsList.appendChild(row);
   });
 }
@@ -901,7 +906,7 @@ function showRoundOverlay(state) {
     .map(id => {
       const p = state.players[id];
       const bid = state.bids?.[id] ?? 0;
-      const took = state.tricksTaken?.[id] ?? 0;
+      const took = state.tricksTaken?.[id] || 0;
 
       const correct = bid === took;
 
