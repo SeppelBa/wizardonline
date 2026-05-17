@@ -537,8 +537,9 @@ button:disabled{
 }
 
 .card{
-  flex:0 0 82px;
-  height:118px;
+  flex: 0 0 82px !important;
+  width: 82px !important;
+  height: 124px !important; /* Leicht erhöht für ein perfektes Rechteck-Verhältnis */
 
   border-radius:20px;
 
@@ -547,8 +548,7 @@ button:disabled{
 
   padding:8px;
 
-  /* ANPASSUNG: Garantiert, dass Ränder die Karte nicht künstlich vergrößern */
-  box-sizing:border-box;
+  box-sizing:border-box !important;
 
   display:flex;
   flex-direction:column;
@@ -617,7 +617,7 @@ button:disabled{
     );
 
   color:white;
-  border: 2px solid #a78bfa !important; /* ANPASSUNG: Gleicht die Randgröße an Drache/Fee an */
+  border: 2px solid #a78bfa !important;
 }
 
 .card.specialJester{
@@ -629,7 +629,7 @@ button:disabled{
     );
 
   color:white;
-  border: 2px solid #cbd5e1 !important; /* ANPASSUNG: Gleicht die Randgröße an Drache/Fee an */
+  border: 2px solid #cbd5e1 !important;
 }
 
 .card .top,
@@ -641,11 +641,14 @@ button:disabled{
   font-weight:700;
 }
 
+/* ANPASSUNG: Verhindert, dass lange Wörter wie Zauberer/Shapeshifter das Kartenlayout sprengen */
 .card .mid{
   text-align:center;
-
-  font-size:1.1rem;
+  font-size: 0.9rem; /* Leicht verkleinert, damit lange Namen perfekt hineinpassen */
   font-weight:800;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
 }
 
 /* HAND */
@@ -925,8 +928,13 @@ button:disabled{
   }
 
   .card{
-    flex:0 0 74px;
-    height:108px;
+    flex: 0 0 74px !important;
+    width: 74px !important;
+    height: 112px !important; /* Auch am Handy das exakte Seitenverhältnis sichern */
+  }
+  
+  .card .mid {
+    font-size: 0.8rem; /* Macht den Text am Smartphone kompakt */
   }
 
   .topbar{
