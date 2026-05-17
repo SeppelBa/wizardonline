@@ -67,6 +67,7 @@ const els = {
   closeOverlayBtn: document.getElementById("closeOverlayBtn"),
   leaderboardList: document.getElementById("leaderboardList"),
   toastContainer: document.getElementById("toastContainer"),
+  anniversaryCheck: document.getElementById("anniversaryCheck") 
 };
 
 const LOCAL = {
@@ -142,6 +143,13 @@ function createDeck() {
     deck.push({ id: uid(), kind: "wizard", label: "Zauberer" });
     deck.push({ id: uid(), kind: "jester", label: "Narr" });
   }
+
+  // Sonderkarten einmischen, falls der Modus aktiv ist
+  if (roomCache && roomCache.anniversaryMode) {
+    deck.push({ id: uid(), kind: "dragon", label: "Drache" });
+    deck.push({ id: uid(), kind: "pixie", label: "Fee" });
+  }
+
   return shuffle(deck);
 }
 
@@ -217,13 +225,17 @@ function cardLabel(card) {
   if (!card) return "—";
   if (card.kind === "wizard") return "Zauberer";
   if (card.kind === "jester") return "Narr";
+  if (card.kind === "dragon") return "Drache";
+  if (card.kind === "pixie") return "Fee";
   const suit = SUIT_BY_KEY[card.suit];
   return `${suit ? suit.short : "?"} ${card.rank}`;
 }
 
 function cardStrength(card, trumpSuit, ledSuit) {
+  if (card.kind === "dragon") return 1500; // Höchste Karte im Spiel
   if (card.kind === "wizard") return 1000;
   if (card.kind === "jester") return -1000;
+  if (card.kind === "pixie") return -1500;  // Niedrigste Karte im Spiel
   let v = card.rank;
   if (trumpSuit && card.suit === trumpSuit) v += 100;
   else if (ledSuit && card.suit === ledSuit) v += 50;
@@ -232,7 +244,8 @@ function cardStrength(card, trumpSuit, ledSuit) {
 
 function getLedSuit(trick) {
   for (const play of trick || []) {
-    if (play.card?.kind === "wizard") return { wizardLed: true, ledSuit: null };
+    if (play.card?.kind === "dragon" || play.card?.kind === "wizard") return { wizardLed: true, ledSuit: null };
+    if (play.card?.kind === "jester" || play.card?.kind === "pixie") continue; // Fee verhält sich wie ein Narr beim Ausspielen
     if (play.card?.kind === "card") return { wizardLed: false, ledSuit: play.card.suit };
   }
   return { wizardLed: false, ledSuit: null };
@@ -253,11 +266,26 @@ function isLegalPlay(card, hand, trick, trumpSuit) {
 
 function determineTrickWinner(trick, trumpSuit) {
   if (!trick?.length) return null;
+
+  const hasDragon = trick.some(play => play.card.kind === "dragon");
+  const hasPixie = trick.some(play => play.card.kind === "pixie");
+
+  // REGEL-AUSNAHME: Liegen Fee UND Drache in einem Stich, gewinnt die Fee!
+  if (hasDragon && hasPixie) {
+    return trick.find(play => play.card.kind === "pixie").playerId;
+  }
+
+  // Normaler Drache: Ohne Fee gewinnt er sofort jeden Stich
+  const firstDragon = trick.find(play => play.card.kind === "dragon");
+  if (firstDragon) return firstDragon.playerId;
+
+  // Wenn kein Drache greift, gewinnt der erste Zauberer
   const firstWizard = trick.find(play => play.card.kind === "wizard");
   if (firstWizard) return firstWizard.playerId;
 
-  const allJesters = trick.every(play => play.card.kind === "jester");
-  if (allJesters) return trick[0].playerId;
+  // Wenn der Stich nur aus Narren und Feen besteht, gewinnt die allererste Karte
+  const allLow = trick.every(play => play.card.kind === "jester" || play.card.kind === "pixie");
+  if (allLow) return trick[0].playerId;
 
   const led = trick.find(play => play.card.kind === "card");
   const ledSuit = led?.card?.suit || null;
@@ -271,6 +299,7 @@ function determineTrickWinner(trick, trumpSuit) {
     : trick.filter(play => play.card.kind === "card" && play.card.suit === ledSuit);
 
   if (!candidates.length) {
+    // Wenn keine passende Farbkarte bedient wurde, gewinnt der erste Narr (Feen verlieren ja immer)
     return trick.find(play => play.card.kind === "jester")?.playerId || trick[0].playerId;
   }
 
@@ -283,8 +312,10 @@ function determineTrickWinner(trick, trumpSuit) {
 function botStrengthForHand(hand, trumpSuit) {
   let score = 0;
   for (const card of hand) {
-    if (card.kind === "wizard") score += 40;
+    if (card.kind === "dragon") score += 45;
+    else if (card.kind === "wizard") score += 40;
     else if (card.kind === "jester") score -= 6;
+    else if (card.kind === "pixie") score -= 8;
     else {
       score += card.rank;
       if (trumpSuit && card.suit === trumpSuit) score += 10;
@@ -347,8 +378,13 @@ function buildRoundState(room, roundNo) {
   const trumpCard = deck[order.length * size] || null;
   const dealerIndex = roundDealerIndex(room, roundNo);
   const leaderIndex = (dealerIndex + 1) % order.length;
-  const phase = trumpCard?.kind === "wizard" ? "choose_trump" : "bidding";
-  const trumpSuit = trumpCard?.kind === "card" ? trumpCard.suit : null;
+  
+  // Wenn Drache oder Zauberer aufgedeckt werden -> Geber wählt Trumpf
+  const isTrumpChoice = (trumpCard?.kind === "wizard" || trumpCard?.kind === "dragon");
+  const phase = isTrumpChoice ? "choose_trump" : "bidding";
+  
+  // Wenn die Fee aufgedeckt wird, gibt es KEINEN Trumpf. Sonst falls Farbkarte.
+  const trumpSuit = (trumpCard?.kind === "card") ? trumpCard.suit : null;
 
   const tricksTaken = {};
   const bids = {};
@@ -384,7 +420,6 @@ function initializeGame(room) {
   const order = playerIds(room);
   const n = order.length;
   room.roundNo = 1;
-  // Limitierung für 2 Spieler auf maximal 20 Runden angepasst (60 Karten / 2 Spieler = 30, aber offiziell 20 Runden Limit bei 2 Personen)
   room.maxRound = n === 2 ? 20 : Math.floor(60 / n);
   room.dealerIndex = 0;
   room.hostId = room.hostId || order[0];
@@ -527,8 +562,8 @@ function nicePhase(phase) {
 
 function renderTrump(state) {
   if (!state?.trumpCard) return "—";
-  if (state.trumpCard.kind === "wizard") return "Wahl";
-  if (state.trumpCard.kind === "jester") return "Kein";
+  if (state.trumpCard.kind === "wizard" || state.trumpCard.kind === "dragon") return "Wahl";
+  if (state.trumpCard.kind === "jester" || state.trumpCard.kind === "pixie") return "Kein";
   return SUIT_BY_KEY[state.trumpCard.suit]?.short || "—";
 }
 
@@ -560,11 +595,15 @@ function renderRoom(state) {
   renderHand(state);
   renderScores(state);
 
-  // Validierung auf MIN_PLAYERS (2) herabgesenkt
   els.startBtn.disabled = !(meIsHost && state.phase === "lobby" && order.length >= MIN_PLAYERS && order.length <= MAX_PLAYERS);
   els.resetBtn.disabled = !meIsHost && state.phase !== "lobby";
   els.addBotBtn.disabled = !(meIsHost && state.phase === "lobby");
   els.fillBotsBtn.disabled = !(meIsHost && state.phase === "lobby");
+
+  if (els.anniversaryCheck) {
+    els.anniversaryCheck.checked = !!state.anniversaryMode;
+    els.anniversaryCheck.disabled = !(meIsHost && state.phase === "lobby");
+  }
 
   const isMyBiddingTurn = (state.phase === "bidding" && currentTurn === currentPlayerId && meIsInGame && !state.players[currentPlayerId]?.isBot);
   els.bidControls.classList.toggle("hidden", !isMyBiddingTurn);
@@ -574,7 +613,6 @@ function renderRoom(state) {
     const options = validBidOptions(state, currentPlayerId);
     els.bidHint.textContent = `Erlaubt: ${options.join(", ")}`;
     
-    // Zähler zurücksetzen falls er außerhalb der Optionen liegt
     if (currentSelectedBid > roundSize(state)) {
       currentSelectedBid = 0;
     }
@@ -666,11 +704,11 @@ function renderHand(state) {
     let trumpIndicator = "—";
     let badgeClass = "";
     if (state?.trumpCard) {
-      if (state.trumpCard.kind === "wizard") {
-        trumpIndicator = "🪄 Wahl";
+      if (state.trumpCard.kind === "wizard" || state.trumpCard.kind === "dragon") {
+        trumpIndicator = (state.trumpCard.kind === "dragon" ? "🐉" : "🪄") + " Wahl";
         badgeClass = "badge bot";
-      } else if (state.trumpCard.kind === "jester") {
-        trumpIndicator = "🎭 Kein";
+      } else if (state.trumpCard.kind === "jester" || state.trumpCard.kind === "pixie") {
+        trumpIndicator = (state.trumpCard.kind === "pixie" ? "🧚" : "🎭") + " Kein";
         badgeClass = "badge host";
       } else {
         const suit = SUIT_BY_KEY[state.trumpCard.suit];
@@ -785,16 +823,28 @@ function renderScores(state) {
 
 function makeCardElement(card, showPlayerTag = false, playerTag = "") {
   const el = document.createElement("div");
-  const cls = card.kind === "wizard" ? "specialWizard" : card.kind === "jester" ? "specialJester" : SUIT_BY_KEY[card.suit]?.css || "";
+  
+  let cls = "";
+  if (card.kind === "wizard") cls = "specialWizard";
+  else if (card.kind === "jester") cls = "specialJester";
+  else if (card.kind === "dragon") cls = "specialDragon";
+  else if (card.kind === "pixie") cls = "specialPixie";
+  else cls = SUIT_BY_KEY[card.suit]?.css || "";
+
   el.className = `card ${cls}`;
   const suit = card.kind === "card" ? SUIT_BY_KEY[card.suit] : null;
-  const top = card.kind === "card" ? suit.short : card.kind === "wizard" ? "🪄" : "🎭";
-  const mid = card.kind === "card" ? card.rank : card.kind === "wizard" ? "Zauberer" : "Narr";
-  const bot = card.kind === "card" ? suit.label : "";
+  
+  let top = "";
+  if (card.kind === "card") top = suit.short;
+  else if (card.kind === "wizard") top = "🪄";
+  else if (card.kind === "jester") top = "🎭";
+  else if (card.kind === "dragon") top = "🐉";
+  else if (card.kind === "pixie") top = "🧚";
+
   el.innerHTML = `
     <div class="top"><span>${top}</span><span>${showPlayerTag && playerTag ? escapeHtml(playerTag) : ""}</span></div>
-    <div class="mid">${escapeHtml(String(mid))}</div>
-    <div class="bot"><span>${escapeHtml(bot)}</span><span>${top}</span></div>
+    <div class="mid">${escapeHtml(String(card.label))}</div>
+    <div class="bot"><span>${card.kind === "card" ? suit.label : ""}</span><span>${top}</span></div>
   `;
   return el;
 }
@@ -936,6 +986,7 @@ function roomStateOrDefault(roomCode, playerName, playerId) {
     tricksTaken: {},
     hands: {},
     scoreHistory: [],
+    anniversaryMode: false,
     players: {
       [playerId]: {
         id: playerId,
@@ -1167,7 +1218,6 @@ async function addBot(count = 1) {
 
 async function fillBotsTo3() {
   if (!roomCache || roomCache.hostId !== currentPlayerId || roomCache.phase !== "lobby") return;
-  // Füllt auf 3 Spieler auf, falls weniger da sind. Wenn schon 2-3 da sind, passiert nichts.
   const missing = Math.max(0, 3 - playerIds(roomCache).length);
   await addBot(Math.min(missing, MAX_PLAYERS - playerIds(roomCache).length));
 }
@@ -1223,7 +1273,7 @@ async function sendBid() {
       return room;
     });
     
-    currentSelectedBid = 0; // Nach Absenden für die nächste Runde resetten
+    currentSelectedBid = 0;
 
   } catch (error) {
     alert("KRITISCHER FIREBASE FEHLER: " + error.message);
@@ -1437,6 +1487,13 @@ els.bidBtn.addEventListener("click", sendBid);
 els.leaveBtn.addEventListener("click", leaveRoom);
 els.nextRoundBtn.addEventListener("click", nextRound);
 els.closeOverlayBtn?.addEventListener("click", hideRoundOverlay);
+
+els.anniversaryCheck?.addEventListener("change", async () => {
+  if (!roomCache || roomCache.hostId !== currentPlayerId) return;
+  await update(ref(db, `rooms/${currentRoomCode}`), {
+    anniversaryMode: els.anniversaryCheck.checked
+  });
+});
 
 document.querySelectorAll(".suitChoice").forEach(btn => {
   btn.addEventListener("click", () => chooseTrumpSuit(btn.dataset.suit));
