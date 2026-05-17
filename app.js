@@ -67,7 +67,10 @@ const els = {
   closeOverlayBtn: document.getElementById("closeOverlayBtn"),
   leaderboardList: document.getElementById("leaderboardList"),
   toastContainer: document.getElementById("toastContainer"),
-  anniversaryCheck: document.getElementById("anniversaryCheck") 
+  anniversaryCheck: document.getElementById("anniversaryCheck"),
+  settingsBtn: document.getElementById("settingsBtn"),
+  settingsOverlay: document.getElementById("settingsOverlay"),
+  closeSettingsBtn: document.getElementById("closeSettingsBtn")
 };
 
 const LOCAL = {
@@ -534,6 +537,7 @@ function showJoinView(show) {
   els.joinView.classList.toggle("hidden", !show);
   els.gameView.classList.toggle("hidden", show);
   els.leaveBtn.classList.toggle("hidden", show);
+  els.settingsBtn?.classList.toggle("hidden", show); // Zahnrad nur im aktiven Spielraum anzeigen
   if (show) {
     fetchGlobalLeaderboard();
   }
@@ -579,12 +583,20 @@ function renderRoom(state) {
 
   order.forEach((id, index) => {
     const p = state.players[id];
+    const bid = state.bids?.[id];
+    
+    // ANPASSUNG: Übersichtliche Live-Stichanzeige (Ansage: X · Stich: Y) im laufenden Spiel
+    let trickStatusText = `${Number(state.tricksTaken?.[id] || 0)} St.`;
+    if (state.phase === "playing" || state.phase === "round_summary") {
+      trickStatusText = `Ansage: ${bid !== null && bid !== undefined ? bid : "—"} · Stich: ${Number(state.tricksTaken?.[id] || 0)}`;
+    }
+
     const row = document.createElement("div");
     row.className = "playerRow";
     row.innerHTML = `
       <div class="name">${escapeHtml(p.name)} ${id === currentPlayerId ? '<span class="badge me">Ich</span>' : ''} ${p.isBot ? '<span class="badge bot">Bot</span>' : ''} ${state.hostId === id ? '<span class="badge host">Host</span>' : ''}</div>
       <div>${Number(p.score || 0)} P</div>
-      <div>${Number(state.tricksTaken?.[id] || 0)} St.</div>
+      <div style="font-size: 0.8rem; color: var(--text-muted); font-weight: 500;">${trickStatusText}</div>
       <div>${currentTurn === id ? (state.phase === "bidding" ? '<span class="badge">Ansage</span>' : '<span class="badge">Zug</span>') : ''}</div>
     `;
     els.playersList.appendChild(row);
@@ -692,7 +704,11 @@ function renderTrick(state) {
     els.trickTable.innerHTML = `<div class="hint">Noch keine Karten im Stich.</div>`;
     return;
   }
-  trick.forEach(play => els.trickTable.appendChild(makeCardElement(play.card, play.playerId === currentPlayerId)));
+  // ANPASSUNG: Holt den Spielernamen und übergibt ihn an makeCardElement für das Namensschild
+  trick.forEach(play => {
+    const pName = playerName(state, play.playerId);
+    els.trickTable.appendChild(makeCardElement(play.card, play.playerId === currentPlayerId, pName));
+  });
 }
 
 function renderHand(state) {
@@ -841,8 +857,9 @@ function makeCardElement(card, showPlayerTag = false, playerTag = "") {
   else if (card.kind === "dragon") top = "🐉";
   else if (card.kind === "pixie") top = "🧚";
 
+  // ANPASSUNG: Rendert das Namensschild über die Klasse .cardOwnerTag, falls playerTag übergeben wurde (im Stichfeld)
   el.innerHTML = `
-    <div class="top"><span>${top}</span><span>${showPlayerTag && playerTag ? escapeHtml(playerTag) : ""}</span></div>
+    <div class="top"><span>${top}</span>${playerTag ? `<span class="cardOwnerTag">${escapeHtml(playerTag)}</span>` : ""}</div>
     <div class="mid">${escapeHtml(String(card.label))}</div>
     <div class="bot"><span>${card.kind === "card" ? suit.label : ""}</span><span>${top}</span></div>
   `;
@@ -1319,7 +1336,7 @@ async function playCard(cardId) {
     }
 
     room.turnIndex = (room.turnIndex + 1) % order.length;
-    room.message = `${playerName(room, order[room.turnIndex])} ist am Zug.`;
+    row.message = `${playerName(room, order[room.turnIndex])} ist am Zug.`;
     return room;
   });
 }
@@ -1458,7 +1475,7 @@ function maybeFillLocalRoomCode() {
   if (currentName) els.nameInput.value = currentName;
 }
 
-// EVENT LISTENER FÜR DIE NEUEN PFEILTASTEN
+// EVENT LISTENER FÜR DIE PFEILTASTEN
 els.bidMinusBtn.addEventListener("click", () => {
   if (currentSelectedBid > 0) {
     currentSelectedBid--;
@@ -1487,6 +1504,14 @@ els.bidBtn.addEventListener("click", sendBid);
 els.leaveBtn.addEventListener("click", leaveRoom);
 els.nextRoundBtn.addEventListener("click", nextRound);
 els.closeOverlayBtn?.addEventListener("click", hideRoundOverlay);
+
+// ANPASSUNG: Event Listener für das Einstellungs-Zahnrad (Pop-up öffnen/schließen)
+els.settingsBtn?.addEventListener("click", () => {
+  els.settingsOverlay?.classList.remove("hidden");
+});
+els.closeSettingsBtn?.addEventListener("click", () => {
+  els.settingsOverlay?.classList.add("hidden");
+});
 
 els.anniversaryCheck?.addEventListener("change", async () => {
   if (!roomCache || roomCache.hostId !== currentPlayerId) return;
