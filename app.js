@@ -68,6 +68,7 @@ const els = {
   leaderboardList: document.getElementById("leaderboardList"),
   toastContainer: document.getElementById("toastContainer"),
   anniversaryCheck: document.getElementById("anniversaryCheck"),
+  strictBidCheck: document.getElementById("strictBidCheck"), // NEUER SCHALTER
   settingsBtn: document.getElementById("settingsBtn"),
   settingsOverlay: document.getElementById("settingsOverlay"),
   closeSettingsBtn: document.getElementById("closeSettingsBtn")
@@ -217,6 +218,28 @@ function handOf(room, playerId) {
   return room.hands?.[playerId] || [];
 }
 
+// NEUE FUNKTION: Sortiert die Karten auf der Hand perfekt aufgeräumt
+function sortHand(hand) {
+  return hand.slice().sort((a, b) => {
+    // 1. Sonderkarten ganz nach vorne
+    const kindOrder = { "wizard": 1, "dragon": 2, "pixie": 3, "bomb": 4, "jester": 5, "card": 6 };
+    if (kindOrder[a.kind] !== kindOrder[b.kind]) {
+      return kindOrder[a.kind] - kindOrder[b.kind];
+    }
+    // 2. Normale Karten sortieren
+    if (a.kind === "card" && b.kind === "card") {
+      // Zuerst nach Farben sortieren (Pik, Herz, Kreuz, Karo)
+      const suitOrder = { "spades": 1, "hearts": 2, "clubs": 3, "diamonds": 4 };
+      if (suitOrder[a.suit] !== suitOrder[b.suit]) {
+        return suitOrder[a.suit] - suitOrder[b.suit];
+      }
+      // Dann nach Zahlen (1 bis 13)
+      return a.rank - b.rank;
+    }
+    return 0;
+  });
+}
+
 function currentTrick(room) {
   return room.currentTrick || [];
 }
@@ -237,11 +260,11 @@ function cardLabel(card) {
 }
 
 function cardStrength(card, trumpSuit, ledSuit) {
-  if (card.kind === "dragon") return 1500; // Höchste Karte im Spiel
+  if (card.kind === "dragon") return 1500;
   if (card.kind === "wizard") return 1000;
   if (card.kind === "jester") return -1000;
   if (card.kind === "pixie") return -1500;
-  if (card.kind === "bomb") return -2000;  // Die Bombe verliert gegen alles
+  if (card.kind === "bomb") return -2000;
   let v = card.rank;
   if (trumpSuit && card.suit === trumpSuit) v += 100;
   else if (ledSuit && card.suit === ledSuit) v += 50;
@@ -251,7 +274,7 @@ function cardStrength(card, trumpSuit, ledSuit) {
 function getLedSuit(trick) {
   for (const play of trick || []) {
     if (play.card?.kind === "dragon" || play.card?.kind === "wizard") return { wizardLed: true, ledSuit: null };
-    if (play.card?.kind === "jester" || play.card?.kind === "pixie" || play.card?.kind === "bomb") continue; // Bombe verhält sich wie ein Narr
+    if (play.card?.kind === "jester" || play.card?.kind === "pixie" || play.card?.kind === "bomb") continue; 
     if (play.card?.kind === "card") return { wizardLed: false, ledSuit: play.card.suit };
   }
   return { wizardLed: false, ledSuit: null };
@@ -317,7 +340,7 @@ function botStrengthForHand(hand, trumpSuit) {
     else if (card.kind === "wizard") score += 40;
     else if (card.kind === "jester") score -= 6;
     else if (card.kind === "pixie") score -= 8;
-    else if (card.kind === "bomb") score -= 10; // Die Bombe ist gut, um Stiche loszuwerden
+    else if (card.kind === "bomb") score -= 10;
     else {
       score += card.rank;
       if (trumpSuit && card.suit === trumpSuit) score += 10;
@@ -361,8 +384,8 @@ function botChoosePlay(room, playerId) {
   const bid = room.bids?.[playerId] ?? 0;
   const taken = room.tricksTaken?.[playerId] ?? 0;
   
-  if (taken < bid) return sorted[sorted.length - 1]; // Will gewinnen -> spielt die Höchste
-  return sorted[0]; // Will verlieren -> spielt die Schwächste (bevorzugt die Bombe)
+  if (taken < bid) return sorted[sorted.length - 1]; 
+  return sorted[0]; 
 }
 
 function roundDealerIndex(room, roundNo) {
@@ -503,6 +526,9 @@ function validBidOptions(room, playerId) {
   const lastBidderIndex = (room.bidStartIndex + order.length - 1) % order.length;
   const isLast = bidderIndex === lastBidderIndex;
   
+  // NEU: Die ±1 Regel auslesen (wenn nicht vorhanden, ist sie standardmäßig true/aktiviert)
+  const isStrict = room.strictBidRule !== false;
+
   const existing = order.reduce((sum, id) => {
     if (id === playerId) return sum;
     const v = room.bids?.[id];
@@ -511,7 +537,8 @@ function validBidOptions(room, playerId) {
 
   const options = [];
   for (let b = 0; b <= round; b++) {
-    if (isLast && (existing + b) === round) continue;
+    // Wenn die Regel aktiviert ist UND der Spieler als Letzter tippt:
+    if (isStrict && isLast && (existing + b) === round) continue;
     options.push(b);
   }
   
@@ -535,7 +562,7 @@ function showJoinView(show) {
   els.joinView.classList.toggle("hidden", !show);
   els.gameView.classList.toggle("hidden", show);
   els.leaveBtn.classList.toggle("hidden", show);
-  els.settingsBtn?.classList.toggle("hidden", show); // Zahnrad nur im aktiven Spielraum anzeigen
+  els.settingsBtn?.classList.toggle("hidden", show);
   if (show) {
     fetchGlobalLeaderboard();
   }
@@ -605,6 +632,12 @@ function renderRoom(state) {
   if (els.anniversaryCheck) {
     els.anniversaryCheck.checked = !!state.anniversaryMode;
     els.anniversaryCheck.disabled = !(meIsHost && state.phase === "lobby");
+  }
+  
+  // UI FÜR DEN NEUEN REGEL-SCHALTER BINDEN
+  if (els.strictBidCheck) {
+    els.strictBidCheck.checked = state.strictBidRule !== false; // Default ist true
+    els.strictBidCheck.disabled = !(meIsHost && state.phase === "lobby");
   }
 
   const isMyBiddingTurn = (state.phase === "bidding" && currentTurn === currentPlayerId && meIsInGame && !state.players[currentPlayerId]?.isBot);
@@ -730,7 +763,9 @@ function renderTrick(state) {
 
 function renderHand(state) {
   els.hand.innerHTML = "";
-  const hand = handOf(state, currentPlayerId);
+  
+  // ANPASSUNG: Die Hand wird vor dem Anzeigen sauber sortiert!
+  const hand = sortHand(handOf(state, currentPlayerId));
   
   const handTitleEl = document.querySelector(".handTop h2");
   if (handTitleEl) {
@@ -1022,6 +1057,7 @@ function roomStateOrDefault(roomCode, playerName, playerId) {
     hands: {},
     scoreHistory: [],
     anniversaryMode: false,
+    strictBidRule: true, // STANDARDMÄSSIG IST DER ZWANG AKTIV
     players: {
       [playerId]: {
         id: playerId,
@@ -1339,7 +1375,6 @@ async function playCard(cardId) {
       const winnerId = determineTrickWinner(room.currentTrick, room.trumpSuit);
       const hasBomb = room.currentTrick.some(p => p.card.kind === "bomb");
       
-      // Wenn eine Bombe liegt, bekommt der Gewinner den Stich NICHT gutgeschrieben
       if (!hasBomb) {
         room.tricksTaken[winnerId] = (room.tricksTaken[winnerId] || 0) + 1;
       }
@@ -1543,7 +1578,7 @@ els.leaveBtn.addEventListener("click", leaveRoom);
 els.nextRoundBtn.addEventListener("click", nextRound);
 els.closeOverlayBtn?.addEventListener("click", hideRoundOverlay);
 
-// ANPASSUNG: Event Listener für das Einstellungs-Zahnrad (Pop-up öffnen/schließen)
+// EVENT LISTENER FÜR DAS ZAHNRAD
 els.settingsBtn?.addEventListener("click", () => {
   els.settingsOverlay?.classList.remove("hidden");
 });
@@ -1555,6 +1590,14 @@ els.anniversaryCheck?.addEventListener("change", async () => {
   if (!roomCache || roomCache.hostId !== currentPlayerId) return;
   await update(ref(db, `rooms/${currentRoomCode}`), {
     anniversaryMode: els.anniversaryCheck.checked
+  });
+});
+
+// EVENT LISTENER FÜR DEN NEUEN SCHALTER
+els.strictBidCheck?.addEventListener("change", async () => {
+  if (!roomCache || roomCache.hostId !== currentPlayerId) return;
+  await update(ref(db, `rooms/${currentRoomCode}`), {
+    strictBidRule: els.strictBidCheck.checked
   });
 });
 
