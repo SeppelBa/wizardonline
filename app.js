@@ -151,6 +151,7 @@ function createDeck() {
   if (roomCache && roomCache.anniversaryMode) {
     deck.push({ id: uid(), kind: "dragon", label: "Drache" });
     deck.push({ id: uid(), kind: "pixie", label: "Fee" });
+    deck.push({ id: uid(), kind: "bomb", label: "Bombe" });
   }
 
   return shuffle(deck);
@@ -230,6 +231,7 @@ function cardLabel(card) {
   if (card.kind === "jester") return "Narr";
   if (card.kind === "dragon") return "Drache";
   if (card.kind === "pixie") return "Fee";
+  if (card.kind === "bomb") return "Bombe";
   const suit = SUIT_BY_KEY[card.suit];
   return `${suit ? suit.short : "?"} ${card.rank}`;
 }
@@ -238,7 +240,8 @@ function cardStrength(card, trumpSuit, ledSuit) {
   if (card.kind === "dragon") return 1500; // Höchste Karte im Spiel
   if (card.kind === "wizard") return 1000;
   if (card.kind === "jester") return -1000;
-  if (card.kind === "pixie") return -1500;  // Niedrigste Karte im Spiel
+  if (card.kind === "pixie") return -1500;
+  if (card.kind === "bomb") return -2000;  // Die Bombe verliert gegen alles
   let v = card.rank;
   if (trumpSuit && card.suit === trumpSuit) v += 100;
   else if (ledSuit && card.suit === ledSuit) v += 50;
@@ -248,7 +251,7 @@ function cardStrength(card, trumpSuit, ledSuit) {
 function getLedSuit(trick) {
   for (const play of trick || []) {
     if (play.card?.kind === "dragon" || play.card?.kind === "wizard") return { wizardLed: true, ledSuit: null };
-    if (play.card?.kind === "jester" || play.card?.kind === "pixie") continue; // Fee verhält sich wie ein Narr beim Ausspielen
+    if (play.card?.kind === "jester" || play.card?.kind === "pixie" || play.card?.kind === "bomb") continue; // Bombe verhält sich wie ein Narr
     if (play.card?.kind === "card") return { wizardLed: false, ledSuit: play.card.suit };
   }
   return { wizardLed: false, ledSuit: null };
@@ -273,21 +276,17 @@ function determineTrickWinner(trick, trumpSuit) {
   const hasDragon = trick.some(play => play.card.kind === "dragon");
   const hasPixie = trick.some(play => play.card.kind === "pixie");
 
-  // REGEL-AUSNAHME: Liegen Fee UND Drache in einem Stich, gewinnt die Fee!
   if (hasDragon && hasPixie) {
     return trick.find(play => play.card.kind === "pixie").playerId;
   }
 
-  // Normaler Drache: Ohne Fee gewinnt er sofort jeden Stich
   const firstDragon = trick.find(play => play.card.kind === "dragon");
   if (firstDragon) return firstDragon.playerId;
 
-  // Wenn kein Drache greift, gewinnt der erste Zauberer
   const firstWizard = trick.find(play => play.card.kind === "wizard");
   if (firstWizard) return firstWizard.playerId;
 
-  // Wenn der Stich nur aus Narren und Feen besteht, gewinnt die allererste Karte
-  const allLow = trick.every(play => play.card.kind === "jester" || play.card.kind === "pixie");
+  const allLow = trick.every(play => play.card.kind === "jester" || play.card.kind === "pixie" || play.card.kind === "bomb");
   if (allLow) return trick[0].playerId;
 
   const led = trick.find(play => play.card.kind === "card");
@@ -302,8 +301,7 @@ function determineTrickWinner(trick, trumpSuit) {
     : trick.filter(play => play.card.kind === "card" && play.card.suit === ledSuit);
 
   if (!candidates.length) {
-    // Wenn keine passende Farbkarte bedient wurde, gewinnt der erste Narr (Feen verlieren ja immer)
-    return trick.find(play => play.card.kind === "jester")?.playerId || trick[0].playerId;
+    return trick.find(play => play.card.kind === "jester" || play.card.kind === "bomb")?.playerId || trick[0].playerId;
   }
 
   return candidates.reduce((best, play) => {
@@ -319,6 +317,7 @@ function botStrengthForHand(hand, trumpSuit) {
     else if (card.kind === "wizard") score += 40;
     else if (card.kind === "jester") score -= 6;
     else if (card.kind === "pixie") score -= 8;
+    else if (card.kind === "bomb") score -= 10; // Die Bombe ist gut, um Stiche loszuwerden
     else {
       score += card.rank;
       if (trumpSuit && card.suit === trumpSuit) score += 10;
@@ -361,8 +360,9 @@ function botChoosePlay(room, playerId) {
   });
   const bid = room.bids?.[playerId] ?? 0;
   const taken = room.tricksTaken?.[playerId] ?? 0;
-  if (taken < bid) return sorted[sorted.length - 1];
-  return sorted[0];
+  
+  if (taken < bid) return sorted[sorted.length - 1]; // Will gewinnen -> spielt die Höchste
+  return sorted[0]; // Will verlieren -> spielt die Schwächste (bevorzugt die Bombe)
 }
 
 function roundDealerIndex(room, roundNo) {
@@ -382,11 +382,9 @@ function buildRoundState(room, roundNo) {
   const dealerIndex = roundDealerIndex(room, roundNo);
   const leaderIndex = (dealerIndex + 1) % order.length;
   
-  // Wenn Drache oder Zauberer aufgedeckt werden -> Geber wählt Trumpf
   const isTrumpChoice = (trumpCard?.kind === "wizard" || trumpCard?.kind === "dragon");
   const phase = isTrumpChoice ? "choose_trump" : "bidding";
   
-  // Wenn die Fee aufgedeckt wird, gibt es KEINEN Trumpf. Sonst falls Farbkarte.
   const trumpSuit = (trumpCard?.kind === "card") ? trumpCard.suit : null;
 
   const tricksTaken = {};
@@ -567,7 +565,7 @@ function nicePhase(phase) {
 function renderTrump(state) {
   if (!state?.trumpCard) return "—";
   if (state.trumpCard.kind === "wizard" || state.trumpCard.kind === "dragon") return "Wahl";
-  if (state.trumpCard.kind === "jester" || state.trumpCard.kind === "pixie") return "Kein";
+  if (state.trumpCard.kind === "jester" || state.trumpCard.kind === "pixie" || state.trumpCard.kind === "bomb") return "Kein";
   return SUIT_BY_KEY[state.trumpCard.suit]?.short || "—";
 }
 
@@ -584,7 +582,6 @@ function renderRoom(state) {
   order.forEach((id, index) => {
     const p = state.players[id];
     
-    // ANPASSUNG: Spielerliste bleibt wieder sauber und schlank – ohne die Stiche dazwischen
     const row = document.createElement("div");
     row.className = "playerRow";
     row.innerHTML = `
@@ -671,7 +668,6 @@ function renderRoom(state) {
   const isSummary = state.phase === "round_summary";
   const isFinished = state.phase === "finished";
   
-  // ANPASSUNG: Der Button wird unten NUR NOCH im "Spiel beendet"-Zustand gebraucht (für "Neues Spiel")
   els.nextRoundBtn.classList.toggle("hidden", !isFinished);
   els.nextRoundBtn.disabled = !(isFinished && state.hostId === currentPlayerId);
   els.nextRoundBtn.textContent = "Neues Spiel";
@@ -679,7 +675,6 @@ function renderRoom(state) {
   maybeScheduleBot(state);
 }
 
-// ANPASSUNG: Die getippten und gemachten Stiche erscheinen jetzt hier als "Ansage / Gemacht" im Spielstatus-Kasten
 function renderBids(state) {
   els.bidsList.innerHTML = "";
   const order = playerIds(state);
@@ -690,9 +685,9 @@ function renderBids(state) {
     let statusDisplay = "—";
     if (bid !== null && bid !== undefined) {
       if (state.phase === "playing" || state.phase === "round_summary") {
-        statusDisplay = `${bid} / ${taken}`; // Format: Ansage / Gemacht
+        statusDisplay = `${bid} / ${taken}`; 
       } else {
-        statusDisplay = bid; // In der reinen Tipp-Phase nur die Ansage zeigen
+        statusDisplay = bid; 
       }
     }
 
@@ -706,20 +701,17 @@ function renderBids(state) {
 function renderTrick(state) {
   els.trickTable.innerHTML = "";
   
-  // ANPASSUNG: Wenn die Runde um ist (round_summary), rendern wir den Host-Button zentral im Stichfeld!
   if (state.phase === "round_summary") {
     if (state.hostId === currentPlayerId) {
-      // Wenn ich der Host bin, erstelle den interaktiven Button direkt im Stichfeld
       const btn = document.createElement("button");
       btn.textContent = "Nächste Runde starten";
       btn.style.padding = "14px 28px";
       btn.style.fontSize = "1.05rem";
       btn.style.borderRadius = "18px";
-      btn.style.animation = "cardFloat 3s ease-in-out infinite"; // Verwendet deine schwebende Kartenanimation!
+      btn.style.animation = "cardFloat 3s ease-in-out infinite"; 
       btn.addEventListener("click", nextRound);
       els.trickTable.appendChild(btn);
     } else {
-      // Wenn ich ein normaler Spieler bin, sehe ich einen zentrierten Statustext im Kasten
       els.trickTable.innerHTML = `<div class="hint" style="font-size:1rem; font-weight:600; color:var(--primary);">Warten auf Host für nächste Runde...</div>`;
     }
     return;
@@ -730,7 +722,6 @@ function renderTrick(state) {
     els.trickTable.innerHTML = `<div class="hint">Noch keine Karten im Stich.</div>`;
     return;
   }
-  // ANPASSUNG: Holt den Spielernamen und übergibt ihn an makeCardElement für das Namensschild
   trick.forEach(play => {
     const pName = playerName(state, play.playerId);
     els.trickTable.appendChild(makeCardElement(play.card, play.playerId === currentPlayerId, pName));
@@ -749,8 +740,8 @@ function renderHand(state) {
       if (state.trumpCard.kind === "wizard" || state.trumpCard.kind === "dragon") {
         trumpIndicator = (state.trumpCard.kind === "dragon" ? "🐉" : "🪄") + " Wahl";
         badgeClass = "badge bot";
-      } else if (state.trumpCard.kind === "jester" || state.trumpCard.kind === "pixie") {
-        trumpIndicator = (state.trumpCard.kind === "pixie" ? "🧚" : "🎭") + " Kein";
+      } else if (state.trumpCard.kind === "jester" || state.trumpCard.kind === "pixie" || state.trumpCard.kind === "bomb") {
+        trumpIndicator = (state.trumpCard.kind === "bomb" ? "💣" : state.trumpCard.kind === "pixie" ? "🧚" : "🎭") + " Kein";
         badgeClass = "badge host";
       } else {
         const suit = SUIT_BY_KEY[state.trumpCard.suit];
@@ -871,6 +862,7 @@ function makeCardElement(card, showPlayerTag = false, playerTag = "") {
   else if (card.kind === "jester") cls = "specialJester";
   else if (card.kind === "dragon") cls = "specialDragon";
   else if (card.kind === "pixie") cls = "specialPixie";
+  else if (card.kind === "bomb") cls = "specialBomb";
   else cls = SUIT_BY_KEY[card.suit]?.css || "";
 
   el.className = `card ${cls}`;
@@ -882,8 +874,8 @@ function makeCardElement(card, showPlayerTag = false, playerTag = "") {
   else if (card.kind === "jester") top = "🎭";
   else if (card.kind === "dragon") top = "🐉";
   else if (card.kind === "pixie") top = "🧚";
+  else if (card.kind === "bomb") top = "💣";
 
-  // ANPASSUNG: Rendert das Namensschild über die Klasse .cardOwnerTag, falls playerTag übergeben wurde (im Stichfeld)
   el.innerHTML = `
     <div class="top"><span>${top}</span>${playerTag ? `<span class="cardOwnerTag">${escapeHtml(playerTag)}</span>` : ""}</div>
     <div class="mid">${escapeHtml(String(card.label))}</div>
@@ -1345,7 +1337,12 @@ async function playCard(cardId) {
 
     if (room.currentTrick.length >= order.length) {
       const winnerId = determineTrickWinner(room.currentTrick, room.trumpSuit);
-      room.tricksTaken[winnerId] = (room.tricksTaken[winnerId] || 0) + 1;
+      const hasBomb = room.currentTrick.some(p => p.card.kind === "bomb");
+      
+      // Wenn eine Bombe liegt, bekommt der Gewinner den Stich NICHT gutgeschrieben
+      if (!hasBomb) {
+        room.tricksTaken[winnerId] = (room.tricksTaken[winnerId] || 0) + 1;
+      }
       room.trickCount = (room.trickCount || 0) + 1;
       room.currentTrick = [];
       room.turnIndex = order.indexOf(winnerId);
@@ -1353,10 +1350,17 @@ async function playCard(cardId) {
       if (room.trickCount >= room.roundNo) {
         room = finishRoundAndMaybeNext(room);
       } else {
-        room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
-        setTimeout(() => {
-          showToast(`${playerName(room, winnerId)} gewinnt den Stich`);
-        }, 50);
+        if (hasBomb) {
+          room.message = `💣 BUMM! Stich zerstört. ${playerName(room, winnerId)} darf ausspielen.`;
+          setTimeout(() => {
+            showToast(`💣 Bombe! Stich verfällt.`);
+          }, 50);
+        } else {
+          room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
+          setTimeout(() => {
+            showToast(`${playerName(room, winnerId)} gewinnt den Stich`);
+          }, 50);
+        }
       }
       return room;
     }
@@ -1475,14 +1479,22 @@ function maybeScheduleBot(state) {
           const orderNow = playerIds(room);
           if (room.currentTrick.length >= orderNow.length) {
             const winnerId = determineTrickWinner(room.currentTrick, room.trumpSuit);
-            room.tricksTaken[winnerId] = (room.tricksTaken[winnerId] || 0) + 1;
+            const hasBomb = room.currentTrick.some(p => p.card.kind === "bomb");
+            
+            if (!hasBomb) {
+              room.tricksTaken[winnerId] = (room.tricksTaken[winnerId] || 0) + 1;
+            }
             room.trickCount = (room.trickCount || 0) + 1;
             room.currentTrick = [];
             room.turnIndex = orderNow.indexOf(winnerId);
             if (room.trickCount >= room.roundNo) {
               room = finishRoundAndMaybeNext(room);
             } else {
-              room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
+              if (hasBomb) {
+                room.message = `💣 BUMM! Stich zerstört. ${playerName(room, winnerId)} darf ausspielen.`;
+              } else {
+                room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
+              }
             }
           } else {
             room.turnIndex = (room.turnIndex + 1) % orderNow.length;
