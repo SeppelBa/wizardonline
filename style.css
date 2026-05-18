@@ -975,3 +975,10 @@ button:disabled{
   box-shadow: 0 0 12px rgba(74, 222, 128, 0.5) !important; 
   color: #bbf7d0 !important; 
 }
+
+.card.specialBomb { 
+  background: linear-gradient(135deg, #1f2937 0%, #000000 100%) !important; 
+  border: 2px solid #6b7280 !important; 
+  box-shadow: 0 0 15px rgba(0, 0, 0, 0.8) !important; 
+  color: #fca5a5 !important; 
+}
