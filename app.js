@@ -86,7 +86,7 @@ let currentName = localStorage.getItem(LOCAL.playerName) || "";
 let roomUnsub = null;
 let roomCache = null;
 let overlayAlreadyShown = false;
-let currentSelectedBid = 0; // Interner Zähler für das neue Klick-System
+let currentSelectedBid = 0;
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js").catch(() => {});
@@ -207,7 +207,6 @@ function trickCount(room) {
   return room.trickCount || 0;
 }
 
-// Steuerung der Klick-Pfeile im UI
 function updateBidDisplay() {
   if (els.bidDisplay) {
     els.bidDisplay.textContent = currentSelectedBid;
@@ -433,6 +432,7 @@ function buildRoundState(room, roundNo) {
     hands,
     trumpCard,
     trumpSuit,
+    trickReadyToClear: false, // WICHTIG: Flag für die Stich-Verzögerung
     pendingTrumpChoiceSeat: phase === "choose_trump" ? dealerIndex : null,
     message: phase === "choose_trump"
       ? `${playerName(room, order[dealerIndex])} darf die Trumpffarbe wählen.`
@@ -589,9 +589,15 @@ function nicePhase(phase) {
   return map[phase] || (phase || "—");
 }
 
+// NEU: Zeigt im oberen Statuskasten die gewählte Trumpffarbe an
 function renderTrump(state) {
   if (!state?.trumpCard) return "—";
-  if (state.trumpCard.kind === "wizard" || state.trumpCard.kind === "dragon") return "Wahl";
+  if (state.trumpCard.kind === "wizard" || state.trumpCard.kind === "dragon") {
+     if (state.trumpSuit && state.phase !== "choose_trump") {
+         return "Wahl: " + (SUIT_BY_KEY[state.trumpSuit]?.short || "");
+     }
+     return "Wahl";
+  }
   if (state.trumpCard.kind === "jester" || state.trumpCard.kind === "pixie" || state.trumpCard.kind === "bomb") return "Kein";
   return SUIT_BY_KEY[state.trumpCard.suit]?.short || "—";
 }
@@ -614,7 +620,7 @@ function renderRoom(state) {
     row.innerHTML = `
       <div class="name">${escapeHtml(p.name)} ${id === currentPlayerId ? '<span class="badge me">Ich</span>' : ''} ${p.isBot ? '<span class="badge bot">Bot</span>' : ''} ${state.hostId === id ? '<span class="badge host">Host</span>' : ''}</div>
       <div>${Number(p.score || 0)} P</div>
-      <div>${currentTurn === id ? (state.phase === "bidding" ? '<span class="badge">Ansage</span>' : '<span class="badge">Zug</span>') : ''}</div>
+      <div>${currentTurn === id && !state.trickReadyToClear ? (state.phase === "bidding" ? '<span class="badge">Ansage</span>' : '<span class="badge">Zug</span>') : ''}</div>
     `;
     els.playersList.appendChild(row);
   });
@@ -634,13 +640,13 @@ function renderRoom(state) {
     els.anniversaryCheck.disabled = !(meIsHost && state.phase === "lobby");
   }
   
-  // UI FÜR DEN NEUEN REGEL-SCHALTER BINDEN
   if (els.strictBidCheck) {
-    els.strictBidCheck.checked = state.strictBidRule !== false; // Default ist true
+    els.strictBidCheck.checked = state.strictBidRule !== false;
     els.strictBidCheck.disabled = !(meIsHost && state.phase === "lobby");
   }
 
-  const isMyBiddingTurn = (state.phase === "bidding" && currentTurn === currentPlayerId && meIsInGame && !state.players[currentPlayerId]?.isBot);
+  // WICHTIG: Wenn der Stich räumt, darf niemand bieten
+  const isMyBiddingTurn = (state.phase === "bidding" && currentTurn === currentPlayerId && meIsInGame && !state.players[currentPlayerId]?.isBot && !state.trickReadyToClear);
   els.bidControls.classList.toggle("hidden", !isMyBiddingTurn);
   els.trumpChoiceControls.classList.toggle("hidden", !(state.phase === "choose_trump" && dealerPlayerId(state) === currentPlayerId && !state.players[currentPlayerId]?.isBot));
   
@@ -667,7 +673,7 @@ function renderRoom(state) {
           : `Lobby.`);
 
   els.handHint.textContent = state.phase === "playing"
-    ? (currentTurn === currentPlayerId ? "Du bist dran. Tippe eine Karte." : `Warten auf ${playerName(state, currentTurn)}.`)
+    ? (state.trickReadyToClear ? "Stich wird abgeräumt..." : (currentTurn === currentPlayerId ? "Du bist dran. Tippe eine Karte." : `Warten auf ${playerName(state, currentTurn)}.`))
     : state.phase === "bidding"
       ? (currentTurn === currentPlayerId ? "Du musst deine Ansage senden." : `Warten auf ${playerName(state, currentTurn)}.`)
       : state.phase === "choose_trump"
@@ -704,6 +710,33 @@ function renderRoom(state) {
   els.nextRoundBtn.classList.toggle("hidden", !isFinished);
   els.nextRoundBtn.disabled = !(isFinished && state.hostId === currentPlayerId);
   els.nextRoundBtn.textContent = "Neues Spiel";
+
+  // NEU: Logik für das verzögerte Abräumen des Stichs (Der Host steuert den Timeout)
+  if (state.trickReadyToClear) {
+    if (state.hostId === currentPlayerId) {
+      if (!window.clearTrickTimeout) {
+        window.clearTrickTimeout = setTimeout(async () => {
+          window.clearTrickTimeout = null;
+          await runTransaction(roomRef(currentRoomCode), r => {
+            if (!r || !r.trickReadyToClear) return r;
+            r.currentTrick = [];
+            r.trickReadyToClear = false;
+            r.turnIndex = r.order.indexOf(r.trickWinner);
+            if (r.trickCount >= r.roundNo) {
+              r = finishRoundAndMaybeNext(r);
+            }
+            return r;
+          });
+        }, 1800); // 1.8 Sekunden warten, damit alle den Stich sehen können!
+      }
+    }
+  } else {
+    // Falls jemand vorher abbricht/Lobby resettet
+    if (window.clearTrickTimeout) {
+      clearTimeout(window.clearTrickTimeout);
+      window.clearTrickTimeout = null;
+    }
+  }
 
   maybeScheduleBot(state);
 }
@@ -764,7 +797,7 @@ function renderTrick(state) {
 function renderHand(state) {
   els.hand.innerHTML = "";
   
-  // ANPASSUNG: Die Hand wird vor dem Anzeigen sauber sortiert!
+  // Hand erst perfekt sortieren, dann rendern
   const hand = sortHand(handOf(state, currentPlayerId));
   
   const handTitleEl = document.querySelector(".handTop h2");
@@ -773,8 +806,16 @@ function renderHand(state) {
     let badgeClass = "";
     if (state?.trumpCard) {
       if (state.trumpCard.kind === "wizard" || state.trumpCard.kind === "dragon") {
-        trumpIndicator = (state.trumpCard.kind === "dragon" ? "🐉" : "🪄") + " Wahl";
-        badgeClass = "badge bot";
+        let symbol = state.trumpCard.kind === "dragon" ? "🐉" : "🪄";
+        // NEU: Wenn die Farbe gewählt wurde, zeigen wir sie direkt neben dem Zauberer/Drachen an!
+        if (state.trumpSuit && state.phase !== "choose_trump") {
+          const suit = SUIT_BY_KEY[state.trumpSuit];
+          trumpIndicator = `${symbol} ${suit?.short}`;
+          badgeClass = `badge ${suit?.css || "bot"}`;
+        } else {
+          trumpIndicator = symbol + " Wahl";
+          badgeClass = "badge bot";
+        }
       } else if (state.trumpCard.kind === "jester" || state.trumpCard.kind === "pixie" || state.trumpCard.kind === "bomb") {
         trumpIndicator = (state.trumpCard.kind === "bomb" ? "💣" : state.trumpCard.kind === "pixie" ? "🧚" : "🎭") + " Kein";
         badgeClass = "badge host";
@@ -795,7 +836,8 @@ function renderHand(state) {
   const legal = legalCards(hand, currentTrick(state), state.trumpSuit);
   const legalIds = new Set(legal.map(c => c.id));
   const myTurn = currentTurnPlayerId(state) === currentPlayerId;
-  const playable = state.phase === "playing" && myTurn;
+  // WICHTIG: blockieren, während der Stich für 1.8s liegen bleibt
+  const playable = state.phase === "playing" && myTurn && !state.trickReadyToClear;
 
   hand.forEach(card => {
     const el = makeCardElement(card, true);
@@ -1071,6 +1113,7 @@ function roomStateOrDefault(roomCode, playerName, playerId) {
     order: [playerId],
     trumpCard: null,
     trumpSuit: null,
+    trickReadyToClear: false,
     pendingTrumpChoiceSeat: null,
     winnerId: null,
     message: "Lobby erstellt."
@@ -1254,6 +1297,7 @@ async function resetToLobby() {
     room.scoreHistory = [];
     room.trumpCard = null;
     room.trumpSuit = null;
+    room.trickReadyToClear = false;
     room.pendingTrumpChoiceSeat = null;
     room.winnerId = null;
     room.message = "Zur Lobby zurückgesetzt.";
@@ -1379,23 +1423,17 @@ async function playCard(cardId) {
         room.tricksTaken[winnerId] = (room.tricksTaken[winnerId] || 0) + 1;
       }
       room.trickCount = (room.trickCount || 0) + 1;
-      room.currentTrick = [];
-      room.turnIndex = order.indexOf(winnerId);
+      
+      // NEU: Stich bleibt jetzt liegen. Wir markieren ihn als abräumbereit!
+      room.trickReadyToClear = true;
+      room.trickWinner = winnerId;
 
-      if (room.trickCount >= room.roundNo) {
-        room = finishRoundAndMaybeNext(room);
+      if (hasBomb) {
+        room.message = `💣 BUMM! Stich zerstört. ${playerName(room, winnerId)} darf ausspielen.`;
+        setTimeout(() => { showToast(`💣 Bombe! Stich verfällt.`); }, 50);
       } else {
-        if (hasBomb) {
-          room.message = `💣 BUMM! Stich zerstört. ${playerName(room, winnerId)} darf ausspielen.`;
-          setTimeout(() => {
-            showToast(`💣 Bombe! Stich verfällt.`);
-          }, 50);
-        } else {
-          room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
-          setTimeout(() => {
-            showToast(`${playerName(room, winnerId)} gewinnt den Stich`);
-          }, 50);
-        }
+        room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
+        setTimeout(() => { showToast(`${playerName(room, winnerId)} gewinnt den Stich`); }, 50);
       }
       return room;
     }
@@ -1429,6 +1467,7 @@ async function nextRound() {
       room.scoreHistory = [];
       room.trumpCard = null;
       room.trumpSuit = null;
+      room.trickReadyToClear = false;
       room.pendingTrumpChoiceSeat = null;
       room.winnerId = null;
       room.message = "Neue Partie bereit.";
@@ -1448,6 +1487,7 @@ async function nextRound() {
 function maybeScheduleBot(state) {
   if (!state) return;
   if (state.phase === "round_summary" || state.phase === "finished" || state.roundNo === 0) return;
+  if (state.trickReadyToClear) return; // Warten, bis der Stich weggeräumt wurde
 
   const order = playerIds(state);
   const botId = currentTurnPlayerId(state);
@@ -1457,6 +1497,7 @@ function maybeScheduleBot(state) {
   window.setTimeout(async () => {
     const fresh = roomCache;
     if (!fresh || fresh.phase === "round_summary" || fresh.phase === "finished" || fresh.roundNo === 0) return;
+    if (fresh.trickReadyToClear) return;
     
     const currentBotId = currentTurnPlayerId(fresh);
     if (!currentBotId || !isBot(fresh, currentBotId) || currentBotId !== botId) return;
@@ -1520,16 +1561,15 @@ function maybeScheduleBot(state) {
               room.tricksTaken[winnerId] = (room.tricksTaken[winnerId] || 0) + 1;
             }
             room.trickCount = (room.trickCount || 0) + 1;
-            room.currentTrick = [];
-            room.turnIndex = orderNow.indexOf(winnerId);
-            if (room.trickCount >= room.roundNo) {
-              room = finishRoundAndMaybeNext(room);
+            
+            // NEU: Verzögerung auch beim Bot
+            room.trickReadyToClear = true;
+            room.trickWinner = winnerId;
+
+            if (hasBomb) {
+              room.message = `💣 BUMM! Stich zerstört. ${playerName(room, winnerId)} darf ausspielen.`;
             } else {
-              if (hasBomb) {
-                room.message = `💣 BUMM! Stich zerstört. ${playerName(room, winnerId)} darf ausspielen.`;
-              } else {
-                room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
-              }
+              room.message = `${playerName(room, winnerId)} gewinnt den Stich.`;
             }
           } else {
             room.turnIndex = (room.turnIndex + 1) % orderNow.length;
