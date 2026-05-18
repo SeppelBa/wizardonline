@@ -539,7 +539,7 @@ button:disabled{
 .card{
   flex: 0 0 82px !important;
   width: 82px !important;
-  height: 124px !important; /* Leicht erhöht für ein perfektes Rechteck-Verhältnis */
+  height: 124px !important;
 
   border-radius:20px;
 
@@ -641,14 +641,18 @@ button:disabled{
   font-weight:700;
 }
 
-/* ANPASSUNG: Verhindert, dass lange Wörter wie Zauberer/Shapeshifter das Kartenlayout sprengen */
 .card .mid{
   text-align:center;
-  font-size: 0.9rem; /* Leicht verkleinert, damit lange Namen perfekt hineinpassen */
+  font-size: 0.9rem;
   font-weight:800;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: clip;
+}
+
+/* NEU: Schriftart für Zauberer verkleinern */
+.card.specialWizard .mid {
+  font-size: 0.65rem;
 }
 
 /* HAND */
@@ -827,10 +831,6 @@ button:disabled{
   text-align:center;
 }
 
-/* ==========================================================================
-   NEU: TOGGLE SWITCH SCHIEBEREGLER & KARTEN NAMENSTAGS STYLES
-   ========================================================================== */
-
 /* Der Schalter-Container */
 .switch {
   position: relative;
@@ -839,14 +839,12 @@ button:disabled{
   height: 26px;
 }
 
-/* Verstecke die Standard-Checkbox */
 .switch input {
   opacity: 0;
   width: 0;
   height: 0;
 }
 
-/* Der Hintergrund des Reglers */
 .switch .slider {
   position: absolute;
   cursor: pointer;
@@ -856,7 +854,6 @@ button:disabled{
   border-radius: 34px;
 }
 
-/* Der weiße Kreis innen */
 .switch .slider:before {
   position: absolute;
   content: "";
@@ -870,17 +867,14 @@ button:disabled{
   box-shadow: 0 2px 4px rgba(0,0,0,0.3);
 }
 
-/* Wenn eingeschaltet: Hintergrund lila animieren */
 .switch input:checked + .slider {
   background-color: #8b5cf6;
 }
 
-/* Wenn eingeschaltet: Kreis nach rechts schieben */
 .switch input:checked + .slider:before {
   transform: translateX(20px);
 }
 
-/* Wenn deaktiviert (nicht Host), Regler ausgrauen */
 .switch input:disabled + .slider {
   opacity: 0.4;
   cursor: not-allowed;
@@ -930,11 +924,15 @@ button:disabled{
   .card{
     flex: 0 0 74px !important;
     width: 74px !important;
-    height: 112px !important; /* Auch am Handy das exakte Seitenverhältnis sichern */
+    height: 112px !important; 
   }
   
   .card .mid {
-    font-size: 0.8rem; /* Macht den Text am Smartphone kompakt */
+    font-size: 0.8rem; 
+  }
+
+  .card.specialWizard .mid {
+    font-size: 0.55rem;
   }
 
   .topbar{
@@ -961,7 +959,6 @@ button:disabled{
   }
 }
 
-/* --- STYLES FÜR DIE SONDERKARTEN (30. JUBILÄUMSEDITION) --- */
 .card.specialDragon { 
   background: linear-gradient(135deg, #7f1d1d 0%, #450a0a 100%) !important; 
   border: 2px solid #ef4444 !important; 
