@@ -68,7 +68,7 @@ const els = {
   leaderboardList: document.getElementById("leaderboardList"),
   toastContainer: document.getElementById("toastContainer"),
   anniversaryCheck: document.getElementById("anniversaryCheck"),
-  strictBidCheck: document.getElementById("strictBidCheck"), // NEUER SCHALTER
+  strictBidCheck: document.getElementById("strictBidCheck"),
   settingsBtn: document.getElementById("settingsBtn"),
   settingsOverlay: document.getElementById("settingsOverlay"),
   closeSettingsBtn: document.getElementById("closeSettingsBtn")
@@ -148,7 +148,6 @@ function createDeck() {
     deck.push({ id: uid(), kind: "jester", label: "Narr" });
   }
 
-  // Sonderkarten einmischen, falls der Modus aktiv ist
   if (roomCache && roomCache.anniversaryMode) {
     deck.push({ id: uid(), kind: "dragon", label: "Drache" });
     deck.push({ id: uid(), kind: "pixie", label: "Fee" });
@@ -217,22 +216,17 @@ function handOf(room, playerId) {
   return room.hands?.[playerId] || [];
 }
 
-// NEUE FUNKTION: Sortiert die Karten auf der Hand perfekt aufgeräumt
 function sortHand(hand) {
   return hand.slice().sort((a, b) => {
-    // 1. Sonderkarten ganz nach vorne
     const kindOrder = { "wizard": 1, "dragon": 2, "pixie": 3, "bomb": 4, "jester": 5, "card": 6 };
     if (kindOrder[a.kind] !== kindOrder[b.kind]) {
       return kindOrder[a.kind] - kindOrder[b.kind];
     }
-    // 2. Normale Karten sortieren
     if (a.kind === "card" && b.kind === "card") {
-      // Zuerst nach Farben sortieren (Pik, Herz, Kreuz, Karo)
       const suitOrder = { "spades": 1, "hearts": 2, "clubs": 3, "diamonds": 4 };
       if (suitOrder[a.suit] !== suitOrder[b.suit]) {
         return suitOrder[a.suit] - suitOrder[b.suit];
       }
-      // Dann nach Zahlen (1 bis 13)
       return a.rank - b.rank;
     }
     return 0;
@@ -432,7 +426,7 @@ function buildRoundState(room, roundNo) {
     hands,
     trumpCard,
     trumpSuit,
-    trickReadyToClear: false, // WICHTIG: Flag für die Stich-Verzögerung
+    trickReadyToClear: false, 
     pendingTrumpChoiceSeat: phase === "choose_trump" ? dealerIndex : null,
     message: phase === "choose_trump"
       ? `${playerName(room, order[dealerIndex])} darf die Trumpffarbe wählen.`
@@ -526,7 +520,6 @@ function validBidOptions(room, playerId) {
   const lastBidderIndex = (room.bidStartIndex + order.length - 1) % order.length;
   const isLast = bidderIndex === lastBidderIndex;
   
-  // NEU: Die ±1 Regel auslesen (wenn nicht vorhanden, ist sie standardmäßig true/aktiviert)
   const isStrict = room.strictBidRule !== false;
 
   const existing = order.reduce((sum, id) => {
@@ -537,7 +530,6 @@ function validBidOptions(room, playerId) {
 
   const options = [];
   for (let b = 0; b <= round; b++) {
-    // Wenn die Regel aktiviert ist UND der Spieler als Letzter tippt:
     if (isStrict && isLast && (existing + b) === round) continue;
     options.push(b);
   }
@@ -589,9 +581,9 @@ function nicePhase(phase) {
   return map[phase] || (phase || "—");
 }
 
-// NEU: Zeigt im oberen Statuskasten die gewählte Trumpffarbe an
 function renderTrump(state) {
   if (!state?.trumpCard) return "—";
+  // Oben im Status die gewählte Farbe anzeigen, falls vorhanden
   if (state.trumpCard.kind === "wizard" || state.trumpCard.kind === "dragon") {
      if (state.trumpSuit && state.phase !== "choose_trump") {
          return "Wahl: " + (SUIT_BY_KEY[state.trumpSuit]?.short || "");
@@ -645,7 +637,6 @@ function renderRoom(state) {
     els.strictBidCheck.disabled = !(meIsHost && state.phase === "lobby");
   }
 
-  // WICHTIG: Wenn der Stich räumt, darf niemand bieten
   const isMyBiddingTurn = (state.phase === "bidding" && currentTurn === currentPlayerId && meIsInGame && !state.players[currentPlayerId]?.isBot && !state.trickReadyToClear);
   els.bidControls.classList.toggle("hidden", !isMyBiddingTurn);
   els.trumpChoiceControls.classList.toggle("hidden", !(state.phase === "choose_trump" && dealerPlayerId(state) === currentPlayerId && !state.players[currentPlayerId]?.isBot));
@@ -711,7 +702,7 @@ function renderRoom(state) {
   els.nextRoundBtn.disabled = !(isFinished && state.hostId === currentPlayerId);
   els.nextRoundBtn.textContent = "Neues Spiel";
 
-  // NEU: Logik für das verzögerte Abräumen des Stichs (Der Host steuert den Timeout)
+  // Verzögerung: Wenn der Stich voll ist, warten wir 1,8 Sekunden, bevor er verschwindet
   if (state.trickReadyToClear) {
     if (state.hostId === currentPlayerId) {
       if (!window.clearTrickTimeout) {
@@ -727,11 +718,10 @@ function renderRoom(state) {
             }
             return r;
           });
-        }, 1800); // 1.8 Sekunden warten, damit alle den Stich sehen können!
+        }, 1800);
       }
     }
   } else {
-    // Falls jemand vorher abbricht/Lobby resettet
     if (window.clearTrickTimeout) {
       clearTimeout(window.clearTrickTimeout);
       window.clearTrickTimeout = null;
@@ -797,7 +787,6 @@ function renderTrick(state) {
 function renderHand(state) {
   els.hand.innerHTML = "";
   
-  // Hand erst perfekt sortieren, dann rendern
   const hand = sortHand(handOf(state, currentPlayerId));
   
   const handTitleEl = document.querySelector(".handTop h2");
@@ -807,7 +796,7 @@ function renderHand(state) {
     if (state?.trumpCard) {
       if (state.trumpCard.kind === "wizard" || state.trumpCard.kind === "dragon") {
         let symbol = state.trumpCard.kind === "dragon" ? "🐉" : "🪄";
-        // NEU: Wenn die Farbe gewählt wurde, zeigen wir sie direkt neben dem Zauberer/Drachen an!
+        // Die Trumpffarbe wird jetzt neben dem Zauberstab eingeblendet!
         if (state.trumpSuit && state.phase !== "choose_trump") {
           const suit = SUIT_BY_KEY[state.trumpSuit];
           trumpIndicator = `${symbol} ${suit?.short}`;
@@ -836,7 +825,7 @@ function renderHand(state) {
   const legal = legalCards(hand, currentTrick(state), state.trumpSuit);
   const legalIds = new Set(legal.map(c => c.id));
   const myTurn = currentTurnPlayerId(state) === currentPlayerId;
-  // WICHTIG: blockieren, während der Stich für 1.8s liegen bleibt
+  // Sperre das Spielen, solange der Stich noch nicht abgeräumt ist
   const playable = state.phase === "playing" && myTurn && !state.trickReadyToClear;
 
   hand.forEach(card => {
@@ -1099,7 +1088,7 @@ function roomStateOrDefault(roomCode, playerName, playerId) {
     hands: {},
     scoreHistory: [],
     anniversaryMode: false,
-    strictBidRule: true, // STANDARDMÄSSIG IST DER ZWANG AKTIV
+    strictBidRule: true, 
     players: {
       [playerId]: {
         id: playerId,
@@ -1424,7 +1413,7 @@ async function playCard(cardId) {
       }
       room.trickCount = (room.trickCount || 0) + 1;
       
-      // NEU: Stich bleibt jetzt liegen. Wir markieren ihn als abräumbereit!
+      // Marker setzen, dass der Stich voll ist und gewartet werden muss
       room.trickReadyToClear = true;
       room.trickWinner = winnerId;
 
@@ -1562,7 +1551,6 @@ function maybeScheduleBot(state) {
             }
             room.trickCount = (room.trickCount || 0) + 1;
             
-            // NEU: Verzögerung auch beim Bot
             room.trickReadyToClear = true;
             room.trickWinner = winnerId;
 
@@ -1588,7 +1576,6 @@ function maybeFillLocalRoomCode() {
   if (currentName) els.nameInput.value = currentName;
 }
 
-// EVENT LISTENER FÜR DIE PFEILTASTEN
 els.bidMinusBtn.addEventListener("click", () => {
   if (currentSelectedBid > 0) {
     currentSelectedBid--;
@@ -1618,7 +1605,6 @@ els.leaveBtn.addEventListener("click", leaveRoom);
 els.nextRoundBtn.addEventListener("click", nextRound);
 els.closeOverlayBtn?.addEventListener("click", hideRoundOverlay);
 
-// EVENT LISTENER FÜR DAS ZAHNRAD
 els.settingsBtn?.addEventListener("click", () => {
   els.settingsOverlay?.classList.remove("hidden");
 });
@@ -1633,7 +1619,6 @@ els.anniversaryCheck?.addEventListener("change", async () => {
   });
 });
 
-// EVENT LISTENER FÜR DEN NEUEN SCHALTER
 els.strictBidCheck?.addEventListener("change", async () => {
   if (!roomCache || roomCache.hostId !== currentPlayerId) return;
   await update(ref(db, `rooms/${currentRoomCode}`), {
