@@ -979,3 +979,10 @@ button:disabled{
   box-shadow: 0 0 15px rgba(0, 0, 0, 0.8) !important; 
   color: #fca5a5 !important; 
 }
+
+.card.specialWerewolf { 
+  background: linear-gradient(135deg, #451a03 0%, #171717 100%) !important; 
+  border: 2px solid #a8a29e !important; 
+  box-shadow: 0 0 15px rgba(168, 162, 158, 0.6) !important; 
+  color: #e7e5e4 !important; 
+}
