@@ -1382,7 +1382,14 @@ async function chooseTrumpSuit(suitKey) {
   const roomReference = roomRef(currentRoomCode);
   await runTransaction(roomReference, room => {
     if (!room || room.phase !== "choose_trump") return room;
-    const currentTurn = order[room.pendingTrumpChoiceSeat] || currentTurnPlayerId(room);
+    
+    // KORREKTUR: Wir müssen über room.order auf den Index zugreifen, 
+    // da 'order' hier im Scope der Transaction nicht existiert.
+    let currentTurn = currentTurnPlayerId(room);
+    if (room.pendingTrumpChoiceSeat !== null && room.pendingTrumpChoiceSeat !== undefined) {
+      currentTurn = room.order[room.pendingTrumpChoiceSeat];
+    }
+
     if (currentTurn !== currentPlayerId && !isBot(room, currentTurn)) return room;
     
     room.trumpSuit = suitKey === "none" ? "none" : suitKey;
@@ -1532,7 +1539,11 @@ function maybeScheduleBot(state) {
   if (state.trickReadyToClear) return; 
 
   const order = playerIds(state);
-  const botId = currentTurnPlayerId(state);
+  
+  let botId = currentTurnPlayerId(state);
+  if (state.phase === "choose_trump" && state.pendingTrumpChoiceSeat !== null && state.pendingTrumpChoiceSeat !== undefined) {
+    botId = order[state.pendingTrumpChoiceSeat];
+  }
 
   if (!botId || !isBot(state, botId)) return;
 
@@ -1542,7 +1553,11 @@ function maybeScheduleBot(state) {
     if (fresh.trickReadyToClear) return;
     
     // Fall 1: Werwolf hat die Turn-Index-Reihenfolge durch pendingTrumpChoiceSeat übernommen
-    const currentBotId = fresh.phase === "choose_trump" ? order[fresh.pendingTrumpChoiceSeat] : currentTurnPlayerId(fresh);
+    let currentBotId = currentTurnPlayerId(fresh);
+    if (fresh.phase === "choose_trump" && fresh.pendingTrumpChoiceSeat !== null && fresh.pendingTrumpChoiceSeat !== undefined) {
+      currentBotId = fresh.order ? fresh.order[fresh.pendingTrumpChoiceSeat] : order[fresh.pendingTrumpChoiceSeat];
+    }
+    
     if (!currentBotId || !isBot(fresh, currentBotId) || currentBotId !== botId) return;
 
     if (fresh.phase === "choose_trump") {
