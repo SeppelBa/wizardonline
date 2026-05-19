@@ -15,7 +15,7 @@ const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
 const MAX_PLAYERS = 6;
-const MIN_PLAYERS = 2; // Geändert von 3 auf 2
+const MIN_PLAYERS = 2; 
 const SUITS = [
   { key: "hearts", label: "Herz", short: "♥", css: "red" },
   { key: "spades", label: "Pik", short: "♠", css: "black" },
@@ -152,6 +152,7 @@ function createDeck() {
     deck.push({ id: uid(), kind: "dragon", label: "Drache" });
     deck.push({ id: uid(), kind: "pixie", label: "Fee" });
     deck.push({ id: uid(), kind: "bomb", label: "Bombe" });
+    deck.push({ id: uid(), kind: "werewolf", label: "Werwolf" }); // NEU: Werwolf hinzugefügt
   }
 
   return shuffle(deck);
@@ -218,7 +219,8 @@ function handOf(room, playerId) {
 
 function sortHand(hand) {
   return hand.slice().sort((a, b) => {
-    const kindOrder = { "wizard": 1, "dragon": 2, "pixie": 3, "bomb": 4, "jester": 5, "card": 6 };
+    // Werwolf beim Sortieren bei den Sonderkarten einreihen
+    const kindOrder = { "wizard": 1, "dragon": 2, "werewolf": 3, "pixie": 4, "bomb": 5, "jester": 6, "card": 7 };
     if (kindOrder[a.kind] !== kindOrder[b.kind]) {
       return kindOrder[a.kind] - kindOrder[b.kind];
     }
@@ -248,6 +250,7 @@ function cardLabel(card) {
   if (card.kind === "dragon") return "Drache";
   if (card.kind === "pixie") return "Fee";
   if (card.kind === "bomb") return "Bombe";
+  if (card.kind === "werewolf") return "Werwolf"; // NEU
   const suit = SUIT_BY_KEY[card.suit];
   return `${suit ? suit.short : "?"} ${card.rank}`;
 }
@@ -256,10 +259,11 @@ function cardStrength(card, trumpSuit, ledSuit) {
   if (card.kind === "dragon") return 1500;
   if (card.kind === "wizard") return 1000;
   if (card.kind === "jester") return -1000;
+  if (card.kind === "werewolf") return -1000; // NEU: Werwolf im Stich verhält sich wie ein Narr
   if (card.kind === "pixie") return -1500;
   if (card.kind === "bomb") return -2000;
   let v = card.rank;
-  if (trumpSuit && card.suit === trumpSuit) v += 100;
+  if (trumpSuit && trumpSuit !== "none" && card.suit === trumpSuit) v += 100; // "none" abgefangen
   else if (ledSuit && card.suit === ledSuit) v += 50;
   return v;
 }
@@ -267,7 +271,8 @@ function cardStrength(card, trumpSuit, ledSuit) {
 function getLedSuit(trick) {
   for (const play of trick || []) {
     if (play.card?.kind === "dragon" || play.card?.kind === "wizard") return { wizardLed: true, ledSuit: null };
-    if (play.card?.kind === "jester" || play.card?.kind === "pixie" || play.card?.kind === "bomb") continue; 
+    // Werwolf verhält sich wie Narr/Fee/Bombe wenn er angespielt wird
+    if (play.card?.kind === "jester" || play.card?.kind === "werewolf" || play.card?.kind === "pixie" || play.card?.kind === "bomb") continue; 
     if (play.card?.kind === "card") return { wizardLed: false, ledSuit: play.card.suit };
   }
   return { wizardLed: false, ledSuit: null };
@@ -302,13 +307,13 @@ function determineTrickWinner(trick, trumpSuit) {
   const firstWizard = trick.find(play => play.card.kind === "wizard");
   if (firstWizard) return firstWizard.playerId;
 
-  const allLow = trick.every(play => play.card.kind === "jester" || play.card.kind === "pixie" || play.card.kind === "bomb");
+  const allLow = trick.every(play => play.card.kind === "jester" || play.card.kind === "werewolf" || play.card.kind === "pixie" || play.card.kind === "bomb");
   if (allLow) return trick[0].playerId;
 
   const led = trick.find(play => play.card.kind === "card");
   const ledSuit = led?.card?.suit || null;
 
-  const trumpPlays = trumpSuit
+  const trumpPlays = (trumpSuit && trumpSuit !== "none")
     ? trick.filter(play => play.card.kind === "card" && play.card.suit === trumpSuit)
     : [];
 
@@ -317,7 +322,7 @@ function determineTrickWinner(trick, trumpSuit) {
     : trick.filter(play => play.card.kind === "card" && play.card.suit === ledSuit);
 
   if (!candidates.length) {
-    return trick.find(play => play.card.kind === "jester" || play.card.kind === "bomb")?.playerId || trick[0].playerId;
+    return trick.find(play => play.card.kind === "jester" || play.card.kind === "werewolf" || play.card.kind === "bomb")?.playerId || trick[0].playerId;
   }
 
   return candidates.reduce((best, play) => {
@@ -332,11 +337,12 @@ function botStrengthForHand(hand, trumpSuit) {
     if (card.kind === "dragon") score += 45;
     else if (card.kind === "wizard") score += 40;
     else if (card.kind === "jester") score -= 6;
+    else if (card.kind === "werewolf") score -= 6; // Falls er nicht getauscht wurde
     else if (card.kind === "pixie") score -= 8;
     else if (card.kind === "bomb") score -= 10;
     else {
       score += card.rank;
-      if (trumpSuit && card.suit === trumpSuit) score += 10;
+      if (trumpSuit && trumpSuit !== "none" && card.suit === trumpSuit) score += 10;
       if (card.rank >= 11) score += 4;
       if (card.rank >= 8) score += 2;
     }
@@ -394,12 +400,53 @@ function buildRoundState(room, roundNo) {
   for (let i = 0; i < order.length; i++) {
     hands[order[i]] = deck.slice(i * size, (i + 1) * size);
   }
-  const trumpCard = deck[order.length * size] || null;
+  let trumpCard = deck[order.length * size] || null;
   const dealerIndex = roundDealerIndex(room, roundNo);
   const leaderIndex = (dealerIndex + 1) % order.length;
   
-  const isTrumpChoice = (trumpCard?.kind === "wizard" || trumpCard?.kind === "dragon");
-  const phase = isTrumpChoice ? "choose_trump" : "bidding";
+  let phase = "bidding";
+  let turnIndex = leaderIndex;
+  let pendingTrumpChoiceSeat = null;
+  let message = `Ansage beginnt bei ${playerName(room, order[leaderIndex])}.`;
+
+  // WERWOLF-LOGIK: Prüfen, ob jemand den Werwolf hat und eine Trumpfkarte ausliegt
+  let werewolfPlayerId = null;
+  let werewolfCardIndex = -1;
+  
+  if (trumpCard) {
+    for (const id of order) {
+      const idx = hands[id].findIndex(c => c.kind === "werewolf");
+      if (idx !== -1) {
+        werewolfPlayerId = id;
+        werewolfCardIndex = idx;
+        break;
+      }
+    }
+  }
+
+  // Werwolf sofort mit Trumpfkarte tauschen (nur wenn es eine Trumpfkarte gibt)
+  if (werewolfPlayerId && trumpCard) {
+    const wwCard = hands[werewolfPlayerId][werewolfCardIndex];
+    hands[werewolfPlayerId][werewolfCardIndex] = trumpCard; // Spieler kriegt den alten Trumpf
+    trumpCard = wwCard; // Werwolf liegt jetzt aufgedeckt
+    
+    phase = "choose_trump";
+    turnIndex = order.indexOf(werewolfPlayerId);
+    pendingTrumpChoiceSeat = turnIndex;
+    message = `🐺 ${playerName(room, werewolfPlayerId)} tauscht Werwolf und wählt Trumpf.`;
+  } 
+  else if (trumpCard?.kind === "werewolf") { // Falls der Werwolf direkt als Trumpf aufgedeckt wurde
+    phase = "choose_trump";
+    turnIndex = dealerIndex;
+    pendingTrumpChoiceSeat = dealerIndex;
+    message = `🐺 Werwolf aufgedeckt! Geber ${playerName(room, order[dealerIndex])} wählt Trumpf.`;
+  }
+  else if (trumpCard?.kind === "wizard" || trumpCard?.kind === "dragon") {
+    phase = "choose_trump";
+    turnIndex = dealerIndex;
+    pendingTrumpChoiceSeat = dealerIndex;
+    message = `${playerName(room, order[dealerIndex])} darf die Trumpffarbe wählen.`;
+  }
   
   const trumpSuit = (trumpCard?.kind === "card") ? trumpCard.suit : null;
 
@@ -416,7 +463,7 @@ function buildRoundState(room, roundNo) {
     maxRound: room.maxRound,
     dealerIndex,
     leaderIndex,
-    turnIndex: phase === "choose_trump" ? dealerIndex : leaderIndex,
+    turnIndex, // Start-Spieler (oder derjenige, der Trumpf wählt)
     bidStartIndex: (dealerIndex + 1) % order.length,
     currentBidOrderIndex: 0,
     currentTrick: [],
@@ -427,10 +474,8 @@ function buildRoundState(room, roundNo) {
     trumpCard,
     trumpSuit,
     trickReadyToClear: false, 
-    pendingTrumpChoiceSeat: phase === "choose_trump" ? dealerIndex : null,
-    message: phase === "choose_trump"
-      ? `${playerName(room, order[dealerIndex])} darf die Trumpffarbe wählen.`
-      : `Ansage beginnt bei ${playerName(room, order[leaderIndex])}.`,
+    pendingTrumpChoiceSeat,
+    message
   };
 }
 
@@ -583,8 +628,8 @@ function nicePhase(phase) {
 
 function renderTrump(state) {
   if (!state?.trumpCard) return "—";
-  // Oben im Status die gewählte Farbe anzeigen, falls vorhanden
-  if (state.trumpCard.kind === "wizard" || state.trumpCard.kind === "dragon") {
+  if (state.trumpCard.kind === "wizard" || state.trumpCard.kind === "dragon" || state.trumpCard.kind === "werewolf") {
+     if (state.trumpSuit === "none") return "Wahl: Kein";
      if (state.trumpSuit && state.phase !== "choose_trump") {
          return "Wahl: " + (SUIT_BY_KEY[state.trumpSuit]?.short || "");
      }
@@ -639,7 +684,9 @@ function renderRoom(state) {
 
   const isMyBiddingTurn = (state.phase === "bidding" && currentTurn === currentPlayerId && meIsInGame && !state.players[currentPlayerId]?.isBot && !state.trickReadyToClear);
   els.bidControls.classList.toggle("hidden", !isMyBiddingTurn);
-  els.trumpChoiceControls.classList.toggle("hidden", !(state.phase === "choose_trump" && dealerPlayerId(state) === currentPlayerId && !state.players[currentPlayerId]?.isBot));
+  
+  // Der Spieler, der Trumpf wählen darf (auch der Werwolf-Tauscher), sieht die Knöpfe
+  els.trumpChoiceControls.classList.toggle("hidden", !(state.phase === "choose_trump" && state.pendingTrumpChoiceSeat === order.indexOf(currentPlayerId) && !state.players[currentPlayerId]?.isBot));
   
   if (isMyBiddingTurn) {
     const options = validBidOptions(state, currentPlayerId);
@@ -654,9 +701,9 @@ function renderRoom(state) {
   }
 
   els.biddingInfo.textContent = state.message || (state.phase === "bidding"
-    ? `Die Ansage beginnt bei ${playerName(state, currentTurnPlayerId(state))}.`
+    ? `Die Ansage beginnt bei ${playerName(state, order[state.bidStartIndex])}.`
     : state.phase === "choose_trump"
-      ? `Der Geber ${playerName(state, dealerPlayerId(state))} wählt jetzt die Trumpffarbe.`
+      ? `${playerName(state, order[state.pendingTrumpChoiceSeat])} wählt jetzt die Trumpffarbe.`
       : state.phase === "playing"
         ? `Es wird im Uhrzeigersinn gespielt.`
         : state.phase === "finished"
@@ -668,7 +715,7 @@ function renderRoom(state) {
     : state.phase === "bidding"
       ? (currentTurn === currentPlayerId ? "Du musst deine Ansage senden." : `Warten auf ${playerName(state, currentTurn)}.`)
       : state.phase === "choose_trump"
-        ? (dealerPlayerId(state) === currentPlayerId ? "Du darfst Trumpf wählen." : `Warten auf ${playerName(state, dealerPlayerId(state))}.`)
+        ? (state.pendingTrumpChoiceSeat === order.indexOf(currentPlayerId) ? "Du darfst Trumpf wählen." : `Warten auf ${playerName(state, order[state.pendingTrumpChoiceSeat])}.`)
         : state.phase === "round_summary"
           ? "Runde vorbei! Ergebnisse werden angezeigt."
           : "Keine Kartenphase.";
@@ -702,7 +749,6 @@ function renderRoom(state) {
   els.nextRoundBtn.disabled = !(isFinished && state.hostId === currentPlayerId);
   els.nextRoundBtn.textContent = "Neues Spiel";
 
-  // Verzögerung: Wenn der Stich voll ist, warten wir 1,8 Sekunden, bevor er verschwindet
   if (state.trickReadyToClear) {
     if (state.hostId === currentPlayerId) {
       if (!window.clearTrickTimeout) {
@@ -794,10 +840,13 @@ function renderHand(state) {
     let trumpIndicator = "—";
     let badgeClass = "";
     if (state?.trumpCard) {
-      if (state.trumpCard.kind === "wizard" || state.trumpCard.kind === "dragon") {
-        let symbol = state.trumpCard.kind === "dragon" ? "🐉" : "🪄";
-        // Die Trumpffarbe wird jetzt neben dem Zauberstab eingeblendet!
-        if (state.trumpSuit && state.phase !== "choose_trump") {
+      if (state.trumpCard.kind === "wizard" || state.trumpCard.kind === "dragon" || state.trumpCard.kind === "werewolf") {
+        let symbol = state.trumpCard.kind === "dragon" ? "🐉" : (state.trumpCard.kind === "werewolf" ? "🐺" : "🪄");
+        
+        if (state.trumpSuit === "none") {
+          trumpIndicator = `${symbol} Kein Trumpf`;
+          badgeClass = "badge host";
+        } else if (state.trumpSuit && state.phase !== "choose_trump") {
           const suit = SUIT_BY_KEY[state.trumpSuit];
           trumpIndicator = `${symbol} ${suit?.short}`;
           badgeClass = `badge ${suit?.css || "bot"}`;
@@ -825,7 +874,6 @@ function renderHand(state) {
   const legal = legalCards(hand, currentTrick(state), state.trumpSuit);
   const legalIds = new Set(legal.map(c => c.id));
   const myTurn = currentTurnPlayerId(state) === currentPlayerId;
-  // Sperre das Spielen, solange der Stich noch nicht abgeräumt ist
   const playable = state.phase === "playing" && myTurn && !state.trickReadyToClear;
 
   hand.forEach(card => {
@@ -929,6 +977,7 @@ function makeCardElement(card, showPlayerTag = false, playerTag = "") {
   else if (card.kind === "dragon") cls = "specialDragon";
   else if (card.kind === "pixie") cls = "specialPixie";
   else if (card.kind === "bomb") cls = "specialBomb";
+  else if (card.kind === "werewolf") cls = "specialWerewolf";
   else cls = SUIT_BY_KEY[card.suit]?.css || "";
 
   el.className = `card ${cls}`;
@@ -941,6 +990,7 @@ function makeCardElement(card, showPlayerTag = false, playerTag = "") {
   else if (card.kind === "dragon") top = "🐉";
   else if (card.kind === "pixie") top = "🧚";
   else if (card.kind === "bomb") top = "💣";
+  else if (card.kind === "werewolf") top = "🐺";
 
   el.innerHTML = `
     <div class="top"><span>${top}</span>${playerTag ? `<span class="cardOwnerTag">${escapeHtml(playerTag)}</span>` : ""}</div>
@@ -1326,18 +1376,22 @@ async function fillBotsTo3() {
   await addBot(Math.min(missing, MAX_PLAYERS - playerIds(roomCache).length));
 }
 
+// NEU: Handhabt jetzt auch "none" (Kein Trumpf)
 async function chooseTrumpSuit(suitKey) {
   if (!roomCache) return;
   const roomReference = roomRef(currentRoomCode);
   await runTransaction(roomReference, room => {
     if (!room || room.phase !== "choose_trump") return room;
-    const currentTurn = currentTurnPlayerId(room);
+    const currentTurn = order[room.pendingTrumpChoiceSeat] || currentTurnPlayerId(room);
     if (currentTurn !== currentPlayerId && !isBot(room, currentTurn)) return room;
-    room.trumpSuit = suitKey;
+    
+    room.trumpSuit = suitKey === "none" ? "none" : suitKey;
     room.phase = "bidding";
     room.turnIndex = room.bidStartIndex;
     room.pendingTrumpChoiceSeat = null;
-    room.message = `Trumpf: ${SUIT_BY_KEY[suitKey]?.label || "—"}. Ansage bei ${playerName(room, room.order[room.turnIndex])}`;
+    
+    const suitName = suitKey === "none" ? "Kein Trumpf" : (SUIT_BY_KEY[suitKey]?.label || "—");
+    room.message = `Trumpf: ${suitName}. Ansage bei ${playerName(room, room.order[room.turnIndex])}`;
     return room;
   });
 }
@@ -1413,7 +1467,6 @@ async function playCard(cardId) {
       }
       room.trickCount = (room.trickCount || 0) + 1;
       
-      // Marker setzen, dass der Stich voll ist und gewartet werden muss
       room.trickReadyToClear = true;
       room.trickWinner = winnerId;
 
@@ -1476,7 +1529,7 @@ async function nextRound() {
 function maybeScheduleBot(state) {
   if (!state) return;
   if (state.phase === "round_summary" || state.phase === "finished" || state.roundNo === 0) return;
-  if (state.trickReadyToClear) return; // Warten, bis der Stich weggeräumt wurde
+  if (state.trickReadyToClear) return; 
 
   const order = playerIds(state);
   const botId = currentTurnPlayerId(state);
@@ -1488,7 +1541,8 @@ function maybeScheduleBot(state) {
     if (!fresh || fresh.phase === "round_summary" || fresh.phase === "finished" || fresh.roundNo === 0) return;
     if (fresh.trickReadyToClear) return;
     
-    const currentBotId = currentTurnPlayerId(fresh);
+    // Fall 1: Werwolf hat die Turn-Index-Reihenfolge durch pendingTrumpChoiceSeat übernommen
+    const currentBotId = fresh.phase === "choose_trump" ? order[fresh.pendingTrumpChoiceSeat] : currentTurnPlayerId(fresh);
     if (!currentBotId || !isBot(fresh, currentBotId) || currentBotId !== botId) return;
 
     if (fresh.phase === "choose_trump") {
