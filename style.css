@@ -711,6 +711,88 @@ button:disabled{
   margin:auto;
 }
 
+/* EMOJI SYSTEM */
+
+.emojiControlWrapper {
+    position: fixed;
+    bottom: 140px; 
+    right: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 10px;
+    z-index: 60; 
+}
+
+.emojiBar {
+    display: flex;
+    gap: 5px;
+    background: rgba(0,0,0,0.7);
+    padding: 10px;
+    border-radius: 20px;
+    border: 1px solid rgba(255,255,255,0.1);
+    backdrop-filter: blur(10px);
+}
+
+#toggleEmojiBtn {
+    font-size: 1.5rem;
+    padding: 12px;
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    background: linear-gradient(135deg, var(--primary), var(--primary2));
+}
+
+.emojiBtn {
+    padding: 8px 10px;
+    font-size: 1.4rem;
+    border-radius: 50%;
+    background: transparent;
+    box-shadow: none;
+    transition: transform 0.1s;
+}
+
+.emojiBtn:hover {
+    background: rgba(255,255,255,0.2);
+    transform: scale(1.1);
+}
+
+.floating-container {
+    position: fixed;
+    bottom: 150px;
+    right: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    pointer-events: none;
+    animation: floatUp 2.5s ease-out forwards;
+    z-index: 1000;
+}
+
+.floating-emoji { 
+    font-size: 3rem; 
+    filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.4));
+}
+
+.floating-name { 
+    background: rgba(0,0,0,0.7); 
+    padding: 4px 10px; 
+    border-radius: 12px; 
+    font-size: 0.8rem; 
+    font-weight: bold;
+    color: white;
+    margin-top: 5px;
+    border: 1px solid rgba(255,255,255,0.1);
+}
+
+@keyframes floatUp {
+    0% { transform: translateY(0) scale(0.5); opacity: 0; }
+    15% { transform: translateY(-30px) scale(1.2); opacity: 1; }
+    30% { transform: translateY(-50px) scale(1); opacity: 1; }
+    100% { transform: translateY(-250px) scale(1); opacity: 0; }
+}
+
+
 /* SCORE */
 
 .scoreRow{
@@ -999,5 +1081,11 @@ button:disabled{
 
   .trumpButtons{
     grid-template-columns:repeat(2,1fr);
+  }
+  
+  /* Anpassung der Positionierung auf Mobile */
+  .emojiControlWrapper {
+      bottom: 150px;
+      right: 15px;
   }
 }
