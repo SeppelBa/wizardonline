@@ -92,6 +92,9 @@ let roomCache = null;
 let overlayAlreadyShown = false;
 let currentSelectedBid = 0;
 
+// NEU: Variable für Emojis
+let lastRenderedTimestamp = 0;
+
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js").catch(() => {});
 }
@@ -811,6 +814,12 @@ function renderRoom(state) {
       clearTimeout(window.clearTrickTimeout);
       window.clearTrickTimeout = null;
     }
+  }
+
+  // NEU: Reaktionen (Emojis) verarbeiten
+  if (state.lastReaction && state.lastReaction.timestamp > lastRenderedTimestamp) {
+      showFloatingEmoji(state.lastReaction);
+      lastRenderedTimestamp = state.lastReaction.timestamp;
   }
 
   maybeScheduleBot(state);
@@ -1728,6 +1737,43 @@ function maybeFillLocalRoomCode() {
   if (saved) els.roomInput.value = saved;
   if (currentName) els.nameInput.value = currentName;
 }
+
+// NEU: Funktionen für Emojis
+window.toggleEmojiBar = () => {
+    const bar = document.getElementById('emojiBar');
+    if (bar.style.display === 'none') {
+        bar.style.display = 'flex';
+    } else {
+        bar.style.display = 'none';
+    }
+};
+
+window.sendEmoji = async (emoji) => {
+  if (!currentRoomCode) return;
+  const roomReference = roomRef(currentRoomCode);
+  await update(roomReference, {
+    lastReaction: {
+      playerName: currentName,
+      emoji: emoji,
+      timestamp: Date.now()
+    }
+  });
+  
+  // Leiste nach dem Senden direkt wieder einklappen
+  document.getElementById('emojiBar').style.display = 'none';
+};
+
+function showFloatingEmoji(reaction) {
+    const container = document.createElement("div");
+    container.className = "floating-container";
+    container.innerHTML = `
+        <div class="floating-emoji">${reaction.emoji}</div>
+        <div class="floating-name">${escapeHtml(reaction.playerName)}</div>
+    `;
+    document.body.appendChild(container);
+    setTimeout(() => container.remove(), 2500);
+}
+
 
 els.bidMinusBtn.addEventListener("click", () => {
   if (currentSelectedBid > 0) {
