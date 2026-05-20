@@ -715,8 +715,8 @@ button:disabled{
 
 .emojiControlWrapper {
   position: absolute;
-  /* Verankert das Menü unten, leicht über der "Deine Karten"-Überschrift */
-  bottom: calc(100% - 35px); 
+  /* Schiebt den Button etwas höher, damit der "Trumpf"-Text nicht verdeckt wird */
+  bottom: calc(100% + 15px); 
   right: 15px;
   display: flex;
   flex-direction: column;
@@ -771,7 +771,8 @@ button:disabled{
 
 .floating-container {
   position: absolute;
-  bottom: 100%; /* Schwebt aufwärts direkt von der Kante des handWrap */
+  /* Startet nun knapp über dem neuen Button-Standort */
+  bottom: calc(100% + 65px); 
   right: 15px;
   display: flex;
   flex-direction: column;
