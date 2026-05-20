@@ -248,7 +248,7 @@ button:disabled{
   flex:1;
 }
 
-/* LEADERBOARD */
+/* LEADERBOARD & STATS */
 
 .leaderboardBox{
   background:rgba(255,255,255,.04);
@@ -282,6 +282,21 @@ button:disabled{
   display:flex;
   justify-content:space-between;
   align-items:center;
+}
+
+/* Hover-Effekt für die Spieler-Statistik (Klickbar) */
+.clickableLeaderboard {
+    transition: transform 0.15s, background 0.15s;
+    cursor: pointer;
+}
+.clickableLeaderboard:hover {
+    background: rgba(255,255,255,.09) !important;
+    transform: scale(1.02);
+}
+
+/* Stats Modal Text Color */
+#statsContent {
+    color: white;
 }
 
 .skeleton{
@@ -650,7 +665,7 @@ button:disabled{
   text-overflow: clip;
 }
 
-/* NEU: Schriftart für Zauberer verkleinern */
+/* Schriftart für Zauberer verkleinern */
 .card.specialWizard .mid {
   font-size: 0.65rem;
 }
@@ -909,8 +924,36 @@ button:disabled{
   box-shadow: 0 3px 6px rgba(0,0,0,0.5);
 }
 
-/* MOBILE */
+/* Jubiläumskarten Spezial Styling */
+.card.specialDragon { 
+  background: linear-gradient(135deg, #7f1d1d 0%, #450a0a 100%) !important; 
+  border: 2px solid #ef4444 !important; 
+  box-shadow: 0 0 15px rgba(239, 68, 68, 0.6) !important; 
+  color: #fca5a5 !important; 
+}
 
+.card.specialPixie { 
+  background: linear-gradient(135deg, #15803d 0%, #166534 100%) !important; 
+  border: 2px solid #4ade80 !important; 
+  box-shadow: 0 0 12px rgba(74, 222, 128, 0.5) !important; 
+  color: #bbf7d0 !important; 
+}
+
+.card.specialBomb { 
+  background: linear-gradient(135deg, #1f2937 0%, #000000 100%) !important; 
+  border: 2px solid #6b7280 !important; 
+  box-shadow: 0 0 15px rgba(0, 0, 0, 0.8) !important; 
+  color: #fca5a5 !important; 
+}
+
+.card.specialWerewolf { 
+  background: linear-gradient(135deg, #451a03 0%, #171717 100%) !important; 
+  border: 2px solid #a8a29e !important; 
+  box-shadow: 0 0 15px rgba(168, 162, 158, 0.6) !important; 
+  color: #e7e5e4 !important; 
+}
+
+/* MOBILE */
 @media(max-width:640px){
 
   body{
@@ -957,32 +1000,4 @@ button:disabled{
   .trumpButtons{
     grid-template-columns:repeat(2,1fr);
   }
-}
-
-.card.specialDragon { 
-  background: linear-gradient(135deg, #7f1d1d 0%, #450a0a 100%) !important; 
-  border: 2px solid #ef4444 !important; 
-  box-shadow: 0 0 15px rgba(239, 68, 68, 0.6) !important; 
-  color: #fca5a5 !important; 
-}
-
-.card.specialPixie { 
-  background: linear-gradient(135deg, #15803d 0%, #166534 100%) !important; 
-  border: 2px solid #4ade80 !important; 
-  box-shadow: 0 0 12px rgba(74, 222, 128, 0.5) !important; 
-  color: #bbf7d0 !important; 
-}
-
-.card.specialBomb { 
-  background: linear-gradient(135deg, #1f2937 0%, #000000 100%) !important; 
-  border: 2px solid #6b7280 !important; 
-  box-shadow: 0 0 15px rgba(0, 0, 0, 0.8) !important; 
-  color: #fca5a5 !important; 
-}
-
-.card.specialWerewolf { 
-  background: linear-gradient(135deg, #451a03 0%, #171717 100%) !important; 
-  border: 2px solid #a8a29e !important; 
-  box-shadow: 0 0 15px rgba(168, 162, 158, 0.6) !important; 
-  color: #e7e5e4 !important; 
 }
