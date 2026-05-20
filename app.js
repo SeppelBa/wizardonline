@@ -55,6 +55,7 @@ const els = {
   fillBotsBtn: document.getElementById("fillBotsBtn"),
   bidControls: document.getElementById("bidControls"),
   trumpChoiceControls: document.getElementById("trumpChoiceControls"),
+  trumpChoiceHint: document.querySelector("#trumpChoiceControls .hint"),
   bidBtn: document.getElementById("bidBtn"),
   bidMinusBtn: document.getElementById("bidMinusBtn"),
   bidPlusBtn: document.getElementById("bidPlusBtn"),
@@ -72,7 +73,6 @@ const els = {
   settingsBtn: document.getElementById("settingsBtn"),
   settingsOverlay: document.getElementById("settingsOverlay"),
   closeSettingsBtn: document.getElementById("closeSettingsBtn"),
-  // NEU: Für Spieler-Statistiken Overlay
   statsOverlay: document.getElementById("statsOverlay"),
   closeStatsBtn: document.getElementById("closeStatsBtn"),
   statsContent: document.getElementById("statsContent")
@@ -498,7 +498,6 @@ function initializeGame(room) {
   return room;
 }
 
-// NEU: Erweiterte Speicherung der Statistiken (Spiele, Punkte)
 async function savePlayerStats(room) {
   const order = playerIds(room);
   
@@ -514,7 +513,7 @@ async function savePlayerStats(room) {
       await runTransaction(userScoreRef, (currentData) => {
         const data = currentData || { wins: 0, gamesPlayed: 0, maxScore: 0, totalScore: 0 };
         
-        if (typeof data === 'number') { // Fallback, falls alte Datenstruktur existiert
+        if (typeof data === 'number') {
           return {
             wins: data + (isWinner ? 1 : 0),
             gamesPlayed: 1,
@@ -572,7 +571,6 @@ function finishRoundAndMaybeNext(room) {
     room.bidStartIndex = null;
     room.turnIndex = null;
     
-    // NEU: Alle Spieler-Statistiken speichern, wenn das Spiel zu Ende ist
     savePlayerStats(room);
     
     return room;
@@ -729,12 +727,16 @@ function renderRoom(state) {
     els.bidHint.textContent = "";
   }
 
-  // FIX: Werwolf Textanzeige
-  let trumpChoiceMsg = "Trumpf wählen";
+  let trumpChoiceMsg = "Zauberer aufgedeckt — Trumpf wählen";
+  
   if (state.trumpCard?.kind === "werewolf") {
-      trumpChoiceMsg = "Werwolf aufgedeckt — Trumpf wählen";
-  } else if (state.trumpCard?.kind === "wizard" || state.trumpCard?.kind === "dragon") {
-      trumpChoiceMsg = "Zauberer/Drache aufgedeckt — Trumpf wählen";
+      trumpChoiceMsg = "🐺 Aaaauuu! Werwolf aufgedeckt — Wähle schnell einen Trumpf!";
+  } else if (state.trumpCard?.kind === "dragon") {
+      trumpChoiceMsg = "🐉 Roaaar! Drache aufgedeckt — Trumpf wählen";
+  }
+
+  if (els.trumpChoiceHint) {
+      els.trumpChoiceHint.textContent = trumpChoiceMsg;
   }
 
   els.biddingInfo.textContent = state.message || (state.phase === "bidding"
@@ -1116,7 +1118,6 @@ function hideRoundOverlay() {
   els.roundOverlay.classList.add("hidden");
 }
 
-// NEU: Diese Funktion zeigt die Details eines Spielers in einem Overlay an
 function showPlayerStats(playerName, stats) {
   if (!els.statsOverlay) return;
   
@@ -1170,10 +1171,8 @@ async function fetchGlobalLeaderboard() {
 
     const data = snapshot.val();
     
-    // Sortieren nach Siegen
     const sortedEntries = Object.entries(data)
       .map(([name, stats]) => {
-          // Kompatibilität mit alten Daten (als nur Number gespeichert wurde)
           if (typeof stats === 'number') {
               return { name, wins: stats, rawData: { wins: stats } };
           }
@@ -1184,7 +1183,7 @@ async function fetchGlobalLeaderboard() {
 
     sortedEntries.forEach((player, idx) => {
       const row = document.createElement("div");
-      row.className = "leaderboardItem clickableLeaderboard"; // Neue Klasse für Hover-Effekt
+      row.className = "leaderboardItem clickableLeaderboard"; 
       row.style.cursor = "pointer";
       
       row.innerHTML = `
@@ -1192,7 +1191,6 @@ async function fetchGlobalLeaderboard() {
         <strong style="color: #ca8a04;">🏆 ${player.wins}</strong>
       `;
       
-      // Klick-Event für Statistiken
       row.addEventListener("click", () => showPlayerStats(player.name, player.rawData));
       
       els.leaderboardList.appendChild(row);
@@ -1460,7 +1458,6 @@ async function fillBotsTo3() {
   await addBot(Math.min(missing, MAX_PLAYERS - playerIds(roomCache).length));
 }
 
-// NEU: Handhabt jetzt auch "none" (Kein Trumpf)
 async function chooseTrumpSuit(suitKey) {
   if (!roomCache) return;
   const roomReference = roomRef(currentRoomCode);
@@ -1485,7 +1482,6 @@ async function chooseTrumpSuit(suitKey) {
   });
 }
 
-// FIX: +1 Regel Validierung
 async function sendBid() {
   if (!roomCache) return;
   
@@ -1501,7 +1497,7 @@ async function sendBid() {
       if (bidderId !== currentPlayerId) return room;
       
       const allowed = validBidOptions(room, currentPlayerId);
-      if (!allowed.includes(bidValue)) return room; // Blockiert DB Update, wenn nicht erlaubt
+      if (!allowed.includes(bidValue)) return room; 
       
       if (!room.bids) room.bids = {};
       room.bids[currentPlayerId] = bidValue;
@@ -1521,7 +1517,6 @@ async function sendBid() {
       return room;
     });
     
-    // UI Feedback nach Transaction
     const allowed = validBidOptions(roomCache, currentPlayerId);
     if (!allowed.includes(bidValue)) {
         alert("Diese Ansage ist gemäß der +1 Regel nicht erlaubt!");
@@ -1770,7 +1765,6 @@ els.closeSettingsBtn?.addEventListener("click", () => {
   els.settingsOverlay?.classList.add("hidden");
 });
 
-// NEU: Event-Listener für das Statistik-Fenster
 els.closeStatsBtn?.addEventListener("click", () => {
   els.statsOverlay?.classList.add("hidden");
 });
