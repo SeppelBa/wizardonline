@@ -71,7 +71,11 @@ const els = {
   strictBidCheck: document.getElementById("strictBidCheck"),
   settingsBtn: document.getElementById("settingsBtn"),
   settingsOverlay: document.getElementById("settingsOverlay"),
-  closeSettingsBtn: document.getElementById("closeSettingsBtn")
+  closeSettingsBtn: document.getElementById("closeSettingsBtn"),
+  // NEU: Für Spieler-Statistiken Overlay
+  statsOverlay: document.getElementById("statsOverlay"),
+  closeStatsBtn: document.getElementById("closeStatsBtn"),
+  statsContent: document.getElementById("statsContent")
 };
 
 const LOCAL = {
@@ -152,7 +156,7 @@ function createDeck() {
     deck.push({ id: uid(), kind: "dragon", label: "Drache" });
     deck.push({ id: uid(), kind: "pixie", label: "Fee" });
     deck.push({ id: uid(), kind: "bomb", label: "Bombe" });
-    deck.push({ id: uid(), kind: "werewolf", label: "Werwolf" }); // NEU: Werwolf hinzugefügt
+    deck.push({ id: uid(), kind: "werewolf", label: "Werwolf" });
   }
 
   return shuffle(deck);
@@ -219,7 +223,6 @@ function handOf(room, playerId) {
 
 function sortHand(hand) {
   return hand.slice().sort((a, b) => {
-    // Werwolf beim Sortieren bei den Sonderkarten einreihen
     const kindOrder = { "wizard": 1, "dragon": 2, "werewolf": 3, "pixie": 4, "bomb": 5, "jester": 6, "card": 7 };
     if (kindOrder[a.kind] !== kindOrder[b.kind]) {
       return kindOrder[a.kind] - kindOrder[b.kind];
@@ -250,7 +253,7 @@ function cardLabel(card) {
   if (card.kind === "dragon") return "Drache";
   if (card.kind === "pixie") return "Fee";
   if (card.kind === "bomb") return "Bombe";
-  if (card.kind === "werewolf") return "Werwolf"; // NEU
+  if (card.kind === "werewolf") return "Werwolf";
   const suit = SUIT_BY_KEY[card.suit];
   return `${suit ? suit.short : "?"} ${card.rank}`;
 }
@@ -259,11 +262,11 @@ function cardStrength(card, trumpSuit, ledSuit) {
   if (card.kind === "dragon") return 1500;
   if (card.kind === "wizard") return 1000;
   if (card.kind === "jester") return -1000;
-  if (card.kind === "werewolf") return -1000; // NEU: Werwolf im Stich verhält sich wie ein Narr
+  if (card.kind === "werewolf") return -1000;
   if (card.kind === "pixie") return -1500;
   if (card.kind === "bomb") return -2000;
   let v = card.rank;
-  if (trumpSuit && trumpSuit !== "none" && card.suit === trumpSuit) v += 100; // "none" abgefangen
+  if (trumpSuit && trumpSuit !== "none" && card.suit === trumpSuit) v += 100;
   else if (ledSuit && card.suit === ledSuit) v += 50;
   return v;
 }
@@ -271,7 +274,6 @@ function cardStrength(card, trumpSuit, ledSuit) {
 function getLedSuit(trick) {
   for (const play of trick || []) {
     if (play.card?.kind === "dragon" || play.card?.kind === "wizard") return { wizardLed: true, ledSuit: null };
-    // Werwolf verhält sich wie Narr/Fee/Bombe wenn er angespielt wird
     if (play.card?.kind === "jester" || play.card?.kind === "werewolf" || play.card?.kind === "pixie" || play.card?.kind === "bomb") continue; 
     if (play.card?.kind === "card") return { wizardLed: false, ledSuit: play.card.suit };
   }
@@ -337,7 +339,7 @@ function botStrengthForHand(hand, trumpSuit) {
     if (card.kind === "dragon") score += 45;
     else if (card.kind === "wizard") score += 40;
     else if (card.kind === "jester") score -= 6;
-    else if (card.kind === "werewolf") score -= 6; // Falls er nicht getauscht wurde
+    else if (card.kind === "werewolf") score -= 6;
     else if (card.kind === "pixie") score -= 8;
     else if (card.kind === "bomb") score -= 10;
     else {
@@ -409,7 +411,6 @@ function buildRoundState(room, roundNo) {
   let pendingTrumpChoiceSeat = null;
   let message = `Ansage beginnt bei ${playerName(room, order[leaderIndex])}.`;
 
-  // WERWOLF-LOGIK: Prüfen, ob jemand den Werwolf hat und eine Trumpfkarte ausliegt
   let werewolfPlayerId = null;
   let werewolfCardIndex = -1;
   
@@ -424,18 +425,17 @@ function buildRoundState(room, roundNo) {
     }
   }
 
-  // Werwolf sofort mit Trumpfkarte tauschen (nur wenn es eine Trumpfkarte gibt)
   if (werewolfPlayerId && trumpCard) {
     const wwCard = hands[werewolfPlayerId][werewolfCardIndex];
-    hands[werewolfPlayerId][werewolfCardIndex] = trumpCard; // Spieler kriegt den alten Trumpf
-    trumpCard = wwCard; // Werwolf liegt jetzt aufgedeckt
+    hands[werewolfPlayerId][werewolfCardIndex] = trumpCard;
+    trumpCard = wwCard;
     
     phase = "choose_trump";
     turnIndex = order.indexOf(werewolfPlayerId);
     pendingTrumpChoiceSeat = turnIndex;
     message = `🐺 ${playerName(room, werewolfPlayerId)} tauscht Werwolf und wählt Trumpf.`;
   } 
-  else if (trumpCard?.kind === "werewolf") { // Falls der Werwolf direkt als Trumpf aufgedeckt wurde
+  else if (trumpCard?.kind === "werewolf") {
     phase = "choose_trump";
     turnIndex = dealerIndex;
     pendingTrumpChoiceSeat = dealerIndex;
@@ -463,7 +463,7 @@ function buildRoundState(room, roundNo) {
     maxRound: room.maxRound,
     dealerIndex,
     leaderIndex,
-    turnIndex, // Start-Spieler (oder derjenige, der Trumpf wählt)
+    turnIndex,
     bidStartIndex: (dealerIndex + 1) % order.length,
     currentBidOrderIndex: 0,
     currentTrick: [],
@@ -498,19 +498,49 @@ function initializeGame(room) {
   return room;
 }
 
-async function saveGlobalWinnerToLeaderboard(winnerName, winnerId) {
-  if (!winnerId || winnerId.startsWith("bot_")) return;
-  const cleanName = winnerName.replace(/[.#$[\]]/g, "_"); 
-  const userScoreRef = ref(db, `global_leaderboard/${cleanName}`);
+// NEU: Erweiterte Speicherung der Statistiken (Spiele, Punkte)
+async function savePlayerStats(room) {
+  const order = playerIds(room);
   
-  try {
-    await runTransaction(userScoreRef, (currentWins) => {
-      return (currentWins || 0) + 1;
-    });
-    fetchGlobalLeaderboard();
-  } catch (e) {
-    console.error("Fehler beim Bestenlisten-Update:", e);
+  for (const id of order) {
+    const p = room.players[id];
+    if (p.isBot) continue; 
+    
+    const cleanName = p.name.replace(/[.#$[\]]/g, "_");
+    const userScoreRef = ref(db, `global_leaderboard/${cleanName}`);
+    const isWinner = room.winnerId === id;
+    
+    try {
+      await runTransaction(userScoreRef, (currentData) => {
+        const data = currentData || { wins: 0, gamesPlayed: 0, maxScore: 0, totalScore: 0 };
+        
+        if (typeof data === 'number') { // Fallback, falls alte Datenstruktur existiert
+          return {
+            wins: data + (isWinner ? 1 : 0),
+            gamesPlayed: 1,
+            maxScore: p.score,
+            totalScore: p.score
+          };
+        }
+        
+        data.gamesPlayed = (data.gamesPlayed || 0) + 1;
+        data.totalScore = (data.totalScore || 0) + p.score;
+        
+        if (isWinner) {
+          data.wins = (data.wins || 0) + 1;
+        }
+        
+        if (p.score > (data.maxScore || 0)) {
+          data.maxScore = p.score;
+        }
+        
+        return data;
+      });
+    } catch (e) {
+      console.error("Fehler beim Speichern der Statistiken für", p.name, e);
+    }
   }
+  fetchGlobalLeaderboard();
 }
 
 function finishRoundAndMaybeNext(room) {
@@ -542,9 +572,9 @@ function finishRoundAndMaybeNext(room) {
     room.bidStartIndex = null;
     room.turnIndex = null;
     
-    if (winner) {
-      saveGlobalWinnerToLeaderboard(winner.name, winner.id);
-    }
+    // NEU: Alle Spieler-Statistiken speichern, wenn das Spiel zu Ende ist
+    savePlayerStats(room);
+    
     return room;
   }
 
@@ -685,7 +715,6 @@ function renderRoom(state) {
   const isMyBiddingTurn = (state.phase === "bidding" && currentTurn === currentPlayerId && meIsInGame && !state.players[currentPlayerId]?.isBot && !state.trickReadyToClear);
   els.bidControls.classList.toggle("hidden", !isMyBiddingTurn);
   
-  // Der Spieler, der Trumpf wählen darf (auch der Werwolf-Tauscher), sieht die Knöpfe
   els.trumpChoiceControls.classList.toggle("hidden", !(state.phase === "choose_trump" && state.pendingTrumpChoiceSeat === order.indexOf(currentPlayerId) && !state.players[currentPlayerId]?.isBot));
   
   if (isMyBiddingTurn) {
@@ -700,10 +729,18 @@ function renderRoom(state) {
     els.bidHint.textContent = "";
   }
 
+  // FIX: Werwolf Textanzeige
+  let trumpChoiceMsg = "Trumpf wählen";
+  if (state.trumpCard?.kind === "werewolf") {
+      trumpChoiceMsg = "Werwolf aufgedeckt — Trumpf wählen";
+  } else if (state.trumpCard?.kind === "wizard" || state.trumpCard?.kind === "dragon") {
+      trumpChoiceMsg = "Zauberer/Drache aufgedeckt — Trumpf wählen";
+  }
+
   els.biddingInfo.textContent = state.message || (state.phase === "bidding"
     ? `Die Ansage beginnt bei ${playerName(state, order[state.bidStartIndex])}.`
     : state.phase === "choose_trump"
-      ? `${playerName(state, order[state.pendingTrumpChoiceSeat])} wählt jetzt die Trumpffarbe.`
+      ? `${playerName(state, order[state.pendingTrumpChoiceSeat])} · ${trumpChoiceMsg}`
       : state.phase === "playing"
         ? `Es wird im Uhrzeigersinn gespielt.`
         : state.phase === "finished"
@@ -1079,6 +1116,45 @@ function hideRoundOverlay() {
   els.roundOverlay.classList.add("hidden");
 }
 
+// NEU: Diese Funktion zeigt die Details eines Spielers in einem Overlay an
+function showPlayerStats(playerName, stats) {
+  if (!els.statsOverlay) return;
+  
+  const wins = stats.wins || 0;
+  const games = stats.gamesPlayed || (typeof stats === 'number' ? 1 : 0);
+  const maxScore = stats.maxScore || "—";
+  const totalScore = stats.totalScore || 0;
+  
+  let winRate = 0;
+  if (games > 0) {
+    winRate = Math.round((wins / games) * 100);
+  }
+
+  els.statsContent.innerHTML = `
+    <h3 style="color: var(--primary); margin-bottom: 15px; font-size: 1.4rem; text-align: center;">${escapeHtml(playerName)}</h3>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+        <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 12px; text-align: center;">
+            <div style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 5px;">Siege</div>
+            <div style="font-size: 1.5rem; font-weight: bold; color: #ca8a04;">🏆 ${wins}</div>
+        </div>
+        <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 12px; text-align: center;">
+            <div style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 5px;">Gespielt</div>
+            <div style="font-size: 1.5rem; font-weight: bold;">🎲 ${games}</div>
+        </div>
+        <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 12px; text-align: center;">
+            <div style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 5px;">Siegquote</div>
+            <div style="font-size: 1.5rem; font-weight: bold;">📈 ${winRate}%</div>
+        </div>
+        <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 12px; text-align: center;">
+            <div style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 5px;">Highscore</div>
+            <div style="font-size: 1.5rem; font-weight: bold; color: #10b981;">⭐ ${maxScore}</div>
+        </div>
+    </div>
+  `;
+  
+  els.statsOverlay.classList.remove("hidden");
+}
+
 async function fetchGlobalLeaderboard() {
   if (!els.leaderboardList) return;
   
@@ -1093,24 +1169,32 @@ async function fetchGlobalLeaderboard() {
     }
 
     const data = snapshot.val();
+    
+    // Sortieren nach Siegen
     const sortedEntries = Object.entries(data)
-      .map(([name, wins]) => ({ name, wins: Number(wins) }))
+      .map(([name, stats]) => {
+          // Kompatibilität mit alten Daten (als nur Number gespeichert wurde)
+          if (typeof stats === 'number') {
+              return { name, wins: stats, rawData: { wins: stats } };
+          }
+          return { name, wins: stats.wins || 0, rawData: stats };
+      })
       .sort((a, b) => b.wins - a.wins)
       .slice(0, 10);
 
     sortedEntries.forEach((player, idx) => {
       const row = document.createElement("div");
-      row.className = "leaderboardRow";
-      row.style.display = "flex";
-      row.style.justifyContent = "space-between";
-      row.style.padding = "6px 8px";
-      row.style.fontSize = "0.85rem";
-      row.style.borderBottom = "1px solid rgba(255,255,255,0.03)";
-
+      row.className = "leaderboardItem clickableLeaderboard"; // Neue Klasse für Hover-Effekt
+      row.style.cursor = "pointer";
+      
       row.innerHTML = `
         <span>#${idx + 1} <strong>${escapeHtml(player.name)}</strong></span>
-        <strong style="color: #ca8a04;">🏆 ${player.wins} ${player.wins === 1 ? 'Sieg' : 'Siege'}</strong>
+        <strong style="color: #ca8a04;">🏆 ${player.wins}</strong>
       `;
+      
+      // Klick-Event für Statistiken
+      row.addEventListener("click", () => showPlayerStats(player.name, player.rawData));
+      
       els.leaderboardList.appendChild(row);
     });
   } catch (e) {
@@ -1383,8 +1467,6 @@ async function chooseTrumpSuit(suitKey) {
   await runTransaction(roomReference, room => {
     if (!room || room.phase !== "choose_trump") return room;
     
-    // KORREKTUR: Wir müssen über room.order auf den Index zugreifen, 
-    // da 'order' hier im Scope der Transaction nicht existiert.
     let currentTurn = currentTurnPlayerId(room);
     if (room.pendingTrumpChoiceSeat !== null && room.pendingTrumpChoiceSeat !== undefined) {
       currentTurn = room.order[room.pendingTrumpChoiceSeat];
@@ -1403,6 +1485,7 @@ async function chooseTrumpSuit(suitKey) {
   });
 }
 
+// FIX: +1 Regel Validierung
 async function sendBid() {
   if (!roomCache) return;
   
@@ -1418,7 +1501,7 @@ async function sendBid() {
       if (bidderId !== currentPlayerId) return room;
       
       const allowed = validBidOptions(room, currentPlayerId);
-      if (!allowed.includes(bidValue)) return room;
+      if (!allowed.includes(bidValue)) return room; // Blockiert DB Update, wenn nicht erlaubt
       
       if (!room.bids) room.bids = {};
       room.bids[currentPlayerId] = bidValue;
@@ -1437,6 +1520,13 @@ async function sendBid() {
       room.message = `Warten auf Ansage von ${playerName(room, room.order[room.turnIndex])}`;
       return room;
     });
+    
+    // UI Feedback nach Transaction
+    const allowed = validBidOptions(roomCache, currentPlayerId);
+    if (!allowed.includes(bidValue)) {
+        alert("Diese Ansage ist gemäß der +1 Regel nicht erlaubt!");
+        return;
+    }
     
     currentSelectedBid = 0;
 
@@ -1552,7 +1642,6 @@ function maybeScheduleBot(state) {
     if (!fresh || fresh.phase === "round_summary" || fresh.phase === "finished" || fresh.roundNo === 0) return;
     if (fresh.trickReadyToClear) return;
     
-    // Fall 1: Werwolf hat die Turn-Index-Reihenfolge durch pendingTrumpChoiceSeat übernommen
     let currentBotId = currentTurnPlayerId(fresh);
     if (fresh.phase === "choose_trump" && fresh.pendingTrumpChoiceSeat !== null && fresh.pendingTrumpChoiceSeat !== undefined) {
       currentBotId = fresh.order ? fresh.order[fresh.pendingTrumpChoiceSeat] : order[fresh.pendingTrumpChoiceSeat];
@@ -1679,6 +1768,11 @@ els.settingsBtn?.addEventListener("click", () => {
 });
 els.closeSettingsBtn?.addEventListener("click", () => {
   els.settingsOverlay?.classList.add("hidden");
+});
+
+// NEU: Event-Listener für das Statistik-Fenster
+els.closeStatsBtn?.addEventListener("click", () => {
+  els.statsOverlay?.classList.add("hidden");
 });
 
 els.anniversaryCheck?.addEventListener("change", async () => {
