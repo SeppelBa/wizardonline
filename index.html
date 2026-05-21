@@ -328,6 +328,11 @@
       <section class="handWrap">
         
         <div class="emojiControlWrapper">
+          <div id="chatInputArea" class="chatInputArea" style="display: none;">
+            <input type="text" id="chatMsgInput" maxlength="30" placeholder="Nachricht..." />
+            <button onclick="sendChatMessage()">➤</button>
+          </div>
+          
           <div id="emojiBar" class="emojiBar" style="display: none;">
             <button class="emojiBtn" onclick="sendEmoji('😂')">😂</button>
             <button class="emojiBtn" onclick="sendEmoji('😭')">😭</button>
