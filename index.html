@@ -428,6 +428,20 @@
     </div>
   </div>
 
+  <div id="shapeshifterOverlay" class="roundOverlay hidden" style="z-index: 200;">
+    <div class="roundOverlayCard" style="max-width: 320px; text-align: center;">
+      <div class="overlayGlow" style="background: #94a3b8;"></div>
+      <h2 style="margin-bottom: 10px;">🌗 Gestaltenwandler</h2>
+      <p style="color: var(--muted); margin-bottom: 20px;">Als was möchtest du diese Karte spielen?</p>
+      
+      <div style="display: flex; gap: 10px;">
+        <button onclick="confirmShapeshifter('wizard')" style="flex: 1; font-size: 1.1rem;">🪄 Zauberer</button>
+        <button onclick="confirmShapeshifter('jester')" class="secondary" style="flex: 1; font-size: 1.1rem;">🎭 Narr</button>
+      </div>
+      <button onclick="document.getElementById('shapeshifterOverlay').classList.add('hidden')" class="ghost" style="margin-top: 15px; width: 100%;">Abbrechen</button>
+    </div>
+  </div>
+
   <script
     type="module"
     src="app.js"
