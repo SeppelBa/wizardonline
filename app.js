@@ -890,7 +890,7 @@ function renderHand(state) {
     let badgeClass = "";
     if (state?.trumpCard) {
       if (state.trumpCard.kind === "wizard" || state.trumpCard.kind === "dragon" || state.trumpCard.kind === "werewolf") {
-        let symbol = state.trumpCard.kind === "dragon" ? "🐉" : (state.trumpCard.kind === "werewolf" ? "🐺" : "🥲");
+        let symbol = state.trumpCard.kind === "dragon" ? "🐉" : (state.trumpCard.kind === "werewolf" ? "🐺" : "🪄");
         
         if (state.trumpSuit === "none") {
           trumpIndicator = `${symbol} Kein Trumpf`;
@@ -1041,7 +1041,7 @@ function makeCardElement(card, showPlayerTag = false, playerTag = "") {
   
   let top = "";
   if (card.kind === "card") top = suit.short;
-  else if (card.kind === "wizard") top = "🥲";
+  else if (card.kind === "wizard") top = "🪄";
   else if (card.kind === "jester") top = "🎭";
   else if (card.kind === "dragon") top = "🐉";
   else if (card.kind === "pixie") top = "🧚";
@@ -1049,7 +1049,7 @@ function makeCardElement(card, showPlayerTag = false, playerTag = "") {
   else if (card.kind === "werewolf") top = "🐺";
 
   if (card.originalKind === "shapeshifter") {
-      top = card.kind === "wizard" ? "🥲 (W)" : "🎭 (W)";
+      top = card.kind === "wizard" ? "🪄 (W)" : "🎭 (W)";
   } else if (card.kind === "shapeshifter") {
       top = "🌗";
   }
