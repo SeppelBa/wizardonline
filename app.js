@@ -160,6 +160,7 @@ function createDeck() {
     deck.push({ id: uid(), kind: "bomb", label: "Bombe" });
     deck.push({ id: uid(), kind: "werewolf", label: "Werwolf" });
     deck.push({ id: uid(), kind: "shapeshifter", label: "Wandler" });
+    deck.push({ id: uid(), kind: "juggler", label: "Jongleur" });
   }
 
   return shuffle(deck);
@@ -226,7 +227,7 @@ function handOf(room, playerId) {
 
 function sortHand(hand) {
   return hand.slice().sort((a, b) => {
-    const kindOrder = { "wizard": 1, "dragon": 2, "werewolf": 3, "shapeshifter": 4, "pixie": 5, "bomb": 6, "jester": 7, "card": 8 };
+    const kindOrder = { "wizard": 1, "dragon": 2, "werewolf": 3, "shapeshifter": 4, "juggler": 5, "pixie": 6, "bomb": 7, "jester": 8, "card": 9 };
     if (kindOrder[a.kind] !== kindOrder[b.kind]) {
       return kindOrder[a.kind] - kindOrder[b.kind];
     }
@@ -258,6 +259,13 @@ function cardLabel(card) {
   if (card.kind === "bomb") return "Bombe";
   if (card.kind === "werewolf") return "Werwolf";
   if (card.kind === "shapeshifter") return "Wandler";
+  if (card.kind === "juggler") {
+    if (card.chosenSuit) {
+      const s = SUIT_BY_KEY[card.chosenSuit];
+      return `${s ? s.short : "?"} 7½`;
+    }
+    return "Jongleur 7½";
+  }
   const suit = SUIT_BY_KEY[card.suit];
   return `${suit ? suit.short : "?"} ${card.rank}`;
 }
@@ -269,6 +277,13 @@ function cardStrength(card, trumpSuit, ledSuit) {
   if (card.kind === "werewolf") return -1000;
   if (card.kind === "pixie") return -1500;
   if (card.kind === "bomb") return -2000;
+  if (card.kind === "juggler") {
+    const suit = card.chosenSuit;
+    let v = 7.5;
+    if (trumpSuit && trumpSuit !== "none" && suit === trumpSuit) v += 100;
+    else if (ledSuit && suit === ledSuit) v += 50;
+    return v;
+  }
   let v = card.rank;
   if (trumpSuit && trumpSuit !== "none" && card.suit === trumpSuit) v += 100;
   else if (ledSuit && card.suit === ledSuit) v += 50;
@@ -278,7 +293,8 @@ function cardStrength(card, trumpSuit, ledSuit) {
 function getLedSuit(trick) {
   for (const play of trick || []) {
     if (play.card?.kind === "dragon" || play.card?.kind === "wizard") return { wizardLed: true, ledSuit: null };
-    if (play.card?.kind === "jester" || play.card?.kind === "werewolf" || play.card?.kind === "pixie" || play.card?.kind === "bomb") continue; 
+    if (play.card?.kind === "jester" || play.card?.kind === "werewolf" || play.card?.kind === "pixie" || play.card?.kind === "bomb") continue;
+    if (play.card?.kind === "juggler" && play.card.chosenSuit) return { wizardLed: false, ledSuit: play.card.chosenSuit };
     if (play.card?.kind === "card") return { wizardLed: false, ledSuit: play.card.suit };
   }
   return { wizardLed: false, ledSuit: null };
@@ -290,11 +306,21 @@ function legalCards(hand, trick, trumpSuit) {
   if (info.wizardLed || !info.ledSuit) return hand.slice();
   const hasSuit = hand.some(c => c.kind === "card" && c.suit === info.ledSuit);
   if (!hasSuit) return hand.slice();
-  return hand.filter(c => c.kind !== "card" || c.suit === info.ledSuit);
+  // Jongleur ist immer legal, auch wenn man bedienen könnte.
+  return hand.filter(c => c.kind === "juggler" || c.kind !== "card" || c.suit === info.ledSuit);
 }
 
 function isLegalPlay(card, hand, trick, trumpSuit) {
   return legalCards(hand, trick, trumpSuit).some(c => c.id === card.id);
+}
+
+// Hilfsfunktion: normalisiert eine Stichkarte zu { suit, rank } für die Wertung.
+// Jongleur zählt mit angesagter Farbe und Rang 7.5.
+function effectiveCardForTrick(card) {
+  if (!card) return null;
+  if (card.kind === "card") return { suit: card.suit, rank: card.rank };
+  if (card.kind === "juggler" && card.chosenSuit) return { suit: card.chosenSuit, rank: 7.5 };
+  return null;
 }
 
 function determineTrickWinner(trick, trumpSuit) {
@@ -316,25 +342,31 @@ function determineTrickWinner(trick, trumpSuit) {
   const allLow = trick.every(play => play.card.kind === "jester" || play.card.kind === "werewolf" || play.card.kind === "pixie" || play.card.kind === "bomb");
   if (allLow) return trick[0].playerId;
 
-  const led = trick.find(play => play.card.kind === "card");
-  const ledSuit = led?.card?.suit || null;
+  // Bedienfarbe = erste reguläre Karte ODER erster Jongleur mit angesagter Farbe.
+  let ledSuit = null;
+  for (const play of trick) {
+    const eff = effectiveCardForTrick(play.card);
+    if (eff) { ledSuit = eff.suit; break; }
+  }
+
+  const tricksWithEffective = trick.map(play => ({ play, eff: effectiveCardForTrick(play.card) })).filter(x => x.eff);
 
   const trumpPlays = (trumpSuit && trumpSuit !== "none")
-    ? trick.filter(play => play.card.kind === "card" && play.card.suit === trumpSuit)
+    ? tricksWithEffective.filter(x => x.eff.suit === trumpSuit)
     : [];
 
   const candidates = trumpPlays.length
     ? trumpPlays
-    : trick.filter(play => play.card.kind === "card" && play.card.suit === ledSuit);
+    : tricksWithEffective.filter(x => x.eff.suit === ledSuit);
 
   if (!candidates.length) {
     return trick.find(play => play.card.kind === "jester" || play.card.kind === "werewolf" || play.card.kind === "bomb")?.playerId || trick[0].playerId;
   }
 
-  return candidates.reduce((best, play) => {
-    if (!best) return play;
-    return (play.card.rank > best.card.rank) ? play : best;
-  }, null).playerId;
+  return candidates.reduce((best, cur) => {
+    if (!best) return cur;
+    return (cur.eff.rank > best.eff.rank) ? cur : best;
+  }, null).play.playerId;
 }
 
 function botStrengthForHand(hand, trumpSuit) {
@@ -365,6 +397,43 @@ function botBid(room, playerId) {
   estimate = Math.max(0, Math.min(round, estimate));
   if (Math.random() < 0.15) estimate = Math.max(0, Math.min(round, estimate + (Math.random() < 0.5 ? -1 : 1)));
   return estimate;
+}
+
+function botJugglerSuit(room, playerId) {
+  const trump = room.trumpSuit;
+  if (trump && trump !== "none") return trump;
+  // Stärkste Farbe in der Hand (mit Bonus für hohe Karten)
+  const hand = handOf(room, playerId).filter(c => c.kind === "card");
+  if (!hand.length) return "hearts";
+  const tally = Object.fromEntries(SUITS.map(s => [s.key, 0]));
+  for (const c of hand) {
+    tally[c.suit] += c.rank + (c.rank >= 11 ? 2 : 0);
+  }
+  return Object.entries(tally).sort((a, b) => b[1] - a[1])[0][0];
+}
+
+function botPassCardChoice(room, playerId) {
+  const hand = handOf(room, playerId);
+  if (!hand.length) return null;
+  const trump = room.trumpSuit;
+  // Sortiere von „am schlechtesten loszuwerden" nach „behalten". Eher schwache, nicht-Trumpf-Karten weggeben.
+  const sorted = hand.slice().sort((a, b) => {
+    const aIsSpecial = a.kind !== "card";
+    const bIsSpecial = b.kind !== "card";
+    // Spezialkarten behalten (Wizards, Drache, Wandler, Jongleur), Negative (Narr/Bombe/Werwolf) eher weggeben.
+    const aGood = a.kind === "wizard" || a.kind === "dragon" || a.kind === "shapeshifter" || a.kind === "juggler";
+    const bGood = b.kind === "wizard" || b.kind === "dragon" || b.kind === "shapeshifter" || b.kind === "juggler";
+    if (aGood !== bGood) return aGood ? 1 : -1; // gute zuletzt
+    if (aIsSpecial !== bIsSpecial) return aIsSpecial ? 1 : -1;
+    if (a.kind === "card" && b.kind === "card") {
+      const aTrump = (trump && trump !== "none" && a.suit === trump) ? 1 : 0;
+      const bTrump = (trump && trump !== "none" && b.suit === trump) ? 1 : 0;
+      if (aTrump !== bTrump) return aTrump - bTrump; // Trumpf eher behalten
+      return a.rank - b.rank; // niedrige zuerst weggeben
+    }
+    return 0;
+  });
+  return sorted[0];
 }
 
 function botTrumpChoice(room, playerId) {
@@ -446,7 +515,7 @@ function buildRoundState(room, roundNo) {
     pendingTrumpChoiceSeat = dealerIndex;
     message = `🐺 Werwolf aufgedeckt! Geber ${playerName(room, order[dealerIndex])} wählt Trumpf.`;
   }
-  else if (trumpCard?.kind === "wizard" || trumpCard?.kind === "dragon") {
+  else if (trumpCard?.kind === "wizard" || trumpCard?.kind === "dragon" || trumpCard?.kind === "juggler") {
     phase = "choose_trump";
     turnIndex = dealerIndex;
     pendingTrumpChoiceSeat = dealerIndex;
@@ -478,8 +547,11 @@ function buildRoundState(room, roundNo) {
     hands,
     trumpCard,
     trumpSuit,
-    trickReadyToClear: false, 
+    trickReadyToClear: false,
     pendingTrumpChoiceSeat,
+    pass: null,
+    jugglerPending: false,
+    trickWinner: null,
     message
   };
 }
@@ -653,6 +725,7 @@ function nicePhase(phase) {
     choose_trump: "Trumpf wählen",
     bidding: "Ansagen",
     playing: "Spielzug",
+    passing_cards: "Karten weitergeben",
     round_summary: "Rundenende",
     finished: "Fertig"
   };
@@ -661,7 +734,7 @@ function nicePhase(phase) {
 
 function renderTrump(state) {
   if (!state?.trumpCard) return "—";
-  if (state.trumpCard.kind === "wizard" || state.trumpCard.kind === "dragon" || state.trumpCard.kind === "werewolf") {
+  if (state.trumpCard.kind === "wizard" || state.trumpCard.kind === "dragon" || state.trumpCard.kind === "werewolf" || state.trumpCard.kind === "juggler") {
      if (state.trumpSuit === "none") return "Wahl: Kein";
      if (state.trumpSuit && state.phase !== "choose_trump") {
          return "Wahl: " + (SUIT_BY_KEY[state.trumpSuit]?.short || "");
@@ -733,11 +806,13 @@ function renderRoom(state) {
   }
 
   let trumpChoiceMsg = "Zauberer aufgedeckt — Trumpf wählen";
-  
+
   if (state.trumpCard?.kind === "werewolf") {
       trumpChoiceMsg = "🐺 Aaaauuu! Werwolf aufgedeckt — Wähle schnell einen Trumpf!";
   } else if (state.trumpCard?.kind === "dragon") {
       trumpChoiceMsg = "🐉 Roaaar! Drache aufgedeckt — Trumpf wählen";
+  } else if (state.trumpCard?.kind === "juggler") {
+      trumpChoiceMsg = "🤹 Jongleur aufgedeckt — Geber wählt Trumpf";
   }
 
   if (els.trumpChoiceHint) {
@@ -750,19 +825,24 @@ function renderRoom(state) {
       ? `${playerName(state, order[state.pendingTrumpChoiceSeat])} · ${trumpChoiceMsg}`
       : state.phase === "playing"
         ? `Es wird im Uhrzeigersinn gespielt.`
-        : state.phase === "finished"
-          ? `Spiel beendet.`
-          : `Lobby.`);
+        : state.phase === "passing_cards"
+          ? `🤹 Jongleur! Jeder gibt eine Karte verdeckt an den linken Nachbarn.`
+          : state.phase === "finished"
+            ? `Spiel beendet.`
+            : `Lobby.`);
 
+  const passingDone = state.phase === "passing_cards" && state.pass && state.pass[currentPlayerId];
   els.handHint.textContent = state.phase === "playing"
     ? (state.trickReadyToClear ? "Stich wird abgeräumt..." : (currentTurn === currentPlayerId ? "Du bist dran. Tippe eine Karte." : `Warten auf ${playerName(state, currentTurn)}.`))
     : state.phase === "bidding"
       ? (currentTurn === currentPlayerId ? "Du musst deine Ansage senden." : `Warten auf ${playerName(state, currentTurn)}.`)
       : state.phase === "choose_trump"
         ? (state.pendingTrumpChoiceSeat === order.indexOf(currentPlayerId) ? "Du darfst Trumpf wählen." : `Warten auf ${playerName(state, order[state.pendingTrumpChoiceSeat])}.`)
-        : state.phase === "round_summary"
-          ? "Runde vorbei! Ergebnisse werden angezeigt."
-          : "Keine Kartenphase.";
+        : state.phase === "passing_cards"
+          ? (passingDone ? "Karte gewählt. Warten auf die anderen…" : "Wähle eine Karte für den linken Nachbarn.")
+          : state.phase === "round_summary"
+            ? "Runde vorbei! Ergebnisse werden angezeigt."
+            : "Keine Kartenphase.";
 
   els.trickInfo.textContent = state.phase === "playing"
     ? `Stiche in dieser Runde: ${state.trickCount}/${roundSize(state)}`
@@ -805,6 +885,14 @@ function renderRoom(state) {
             r.turnIndex = r.order.indexOf(r.trickWinner);
             if (r.trickCount >= r.roundNo) {
               r = finishRoundAndMaybeNext(r);
+              r.jugglerPending = false;
+              return r;
+            }
+            if (r.jugglerPending) {
+              r.phase = "passing_cards";
+              r.pass = {};
+              r.jugglerPending = false;
+              r.message = "🤹 Jongleur! Jeder gibt eine Karte verdeckt an den linken Nachbarn.";
             }
             return r;
           });
@@ -824,6 +912,33 @@ function renderRoom(state) {
   }
 
   maybeScheduleBot(state);
+  maybeAutoPassBots(state);
+}
+
+// Während passing_cards: Host wählt für jeden Bot eine sinnvolle Karte automatisch.
+function maybeAutoPassBots(state) {
+  if (!state || state.phase !== "passing_cards") return;
+  if (state.hostId !== currentPlayerId) return;
+  const order = playerIds(state);
+  const needs = order.filter(id => isBot(state, id) && !(state.pass && state.pass[id]));
+  if (!needs.length) return;
+  if (window.__passBotsTimeout) return;
+  window.__passBotsTimeout = setTimeout(async () => {
+    window.__passBotsTimeout = null;
+    await runTransaction(roomRef(currentRoomCode), room => {
+      if (!room || room.phase !== "passing_cards") return room;
+      const ord = playerIds(room);
+      room.pass = room.pass || {};
+      for (const id of ord) {
+        if (!isBot(room, id)) continue;
+        if (room.pass[id]) continue;
+        const card = botPassCardChoice(room, id);
+        if (card) room.pass[id] = card.id;
+      }
+      finalizePassIfReady(room);
+      return room;
+    });
+  }, 700 + Math.random() * 400);
 }
 
 function renderBids(state) {
@@ -851,7 +966,14 @@ function renderBids(state) {
 
 function renderTrick(state) {
   els.trickTable.innerHTML = "";
-  
+
+  if (state.phase === "passing_cards") {
+    const order = playerIds(state);
+    const waitingFor = order.filter(id => !(state.pass && state.pass[id])).map(id => playerName(state, id));
+    els.trickTable.innerHTML = `<div class="hint" style="font-size:1rem; font-weight:600; color:var(--primary);">🤹 Karten weitergeben${waitingFor.length ? `<br><span style="color:var(--muted); font-size:.85rem; font-weight:500;">Warten auf: ${waitingFor.map(escapeHtml).join(", ")}</span>` : ""}</div>`;
+    return;
+  }
+
   if (state.phase === "round_summary") {
     if (state.hostId === currentPlayerId) {
       const btn = document.createElement("button");
@@ -889,8 +1011,11 @@ function renderHand(state) {
     let trumpIndicator = "—";
     let badgeClass = "";
     if (state?.trumpCard) {
-      if (state.trumpCard.kind === "wizard" || state.trumpCard.kind === "dragon" || state.trumpCard.kind === "werewolf") {
-        let symbol = state.trumpCard.kind === "dragon" ? "🐉" : (state.trumpCard.kind === "werewolf" ? "🐺" : "🪄");
+      if (state.trumpCard.kind === "wizard" || state.trumpCard.kind === "dragon" || state.trumpCard.kind === "werewolf" || state.trumpCard.kind === "juggler") {
+        let symbol = state.trumpCard.kind === "dragon" ? "🐉"
+          : state.trumpCard.kind === "werewolf" ? "🐺"
+          : state.trumpCard.kind === "juggler" ? "🤹"
+          : "🪄";
         
         if (state.trumpSuit === "none") {
           trumpIndicator = `${symbol} Kein Trumpf`;
@@ -924,20 +1049,33 @@ function renderHand(state) {
   const legalIds = new Set(legal.map(c => c.id));
   const myTurn = currentTurnPlayerId(state) === currentPlayerId;
   const playable = state.phase === "playing" && myTurn && !state.trickReadyToClear;
+  const passing = state.phase === "passing_cards";
+  const alreadyPassed = passing && !!(state.pass && state.pass[currentPlayerId]);
 
   hand.forEach(card => {
     const el = makeCardElement(card, true);
     const allowed = legalIds.has(card.id);
-    el.classList.toggle("clickable", playable && allowed);
-    el.classList.toggle("disabled", playable && !allowed);
-    if (playable && allowed) {
-      el.addEventListener("click", () => {
-        if (card.kind === "shapeshifter") {
-            window.openShapeshifterModal(card.id);
-        } else {
-            playCard(card.id);
-        }
-      });
+    if (passing) {
+      const canPick = !alreadyPassed;
+      el.classList.toggle("clickable", canPick);
+      el.classList.toggle("disabled", !canPick);
+      if (canPick) {
+        el.addEventListener("click", () => submitPassChoice(card.id));
+      }
+    } else {
+      el.classList.toggle("clickable", playable && allowed);
+      el.classList.toggle("disabled", playable && !allowed);
+      if (playable && allowed) {
+        el.addEventListener("click", () => {
+          if (card.kind === "shapeshifter") {
+              window.openShapeshifterModal(card.id);
+          } else if (card.kind === "juggler") {
+              window.openJugglerModal(card.id);
+          } else {
+              playCard(card.id);
+          }
+        });
+      }
     }
     els.hand.appendChild(el);
   });
@@ -1034,6 +1172,7 @@ function makeCardElement(card, showPlayerTag = false, playerTag = "") {
   else if (card.kind === "bomb") cls = "specialBomb";
   else if (card.kind === "werewolf") cls = "specialWerewolf";
   else if (card.kind === "shapeshifter" || card.originalKind === "shapeshifter") cls = "specialShapeshifter";
+  else if (card.kind === "juggler") cls = "specialJuggler";
   else cls = SUIT_BY_KEY[card.suit]?.css || "";
 
   el.className = `card ${cls}`;
@@ -1047,6 +1186,10 @@ function makeCardElement(card, showPlayerTag = false, playerTag = "") {
   else if (card.kind === "pixie") top = "🧚";
   else if (card.kind === "bomb") top = "💣";
   else if (card.kind === "werewolf") top = "🐺";
+  else if (card.kind === "juggler") {
+    const s = card.chosenSuit ? SUIT_BY_KEY[card.chosenSuit]?.short : null;
+    top = s ? `🤹 ${s}` : "🤹";
+  }
 
   if (card.originalKind === "shapeshifter") {
       top = card.kind === "wizard" ? "🪄 (W)" : "🎭 (W)";
@@ -1259,6 +1402,9 @@ function roomStateOrDefault(roomCode, playerName, playerId) {
     trumpSuit: null,
     trickReadyToClear: false,
     pendingTrumpChoiceSeat: null,
+    pass: null,
+    jugglerPending: false,
+    trickWinner: null,
     winnerId: null,
     message: "Lobby erstellt."
   };
@@ -1317,7 +1463,7 @@ async function joinOrCreateRoom(isCreate = false) {
     }
 
     if (!alreadyPlayer) {
-      room.spectators[currentPlayerId] = { id: playerId, name, joinedAt: Date.now() };
+      room.spectators[currentPlayerId] = { id: currentPlayerId, name, joinedAt: Date.now() };
       room.message = `${name} ist als Zuschauer beigetreten.`;
       return room;
     }
@@ -1444,6 +1590,9 @@ async function resetToLobby() {
     room.trickReadyToClear = false;
     room.pendingTrumpChoiceSeat = null;
     room.winnerId = null;
+    room.pass = null;
+    room.jugglerPending = false;
+    room.trickWinner = null;
     room.message = "Zur Lobby zurückgesetzt.";
     return room;
   });
@@ -1553,7 +1702,63 @@ async function sendBid() {
   }
 }
 
-async function playCard(cardId, chosenKind = null) {
+// Spieler wählt eine Karte zum verdeckten Weitergeben an linken Nachbarn.
+async function submitPassChoice(cardId) {
+  if (!roomCache) return;
+  const roomReference = roomRef(currentRoomCode);
+  await runTransaction(roomReference, room => {
+    if (!room || room.phase !== "passing_cards") return room;
+    const hand = room.hands?.[currentPlayerId] || [];
+    if (!hand.some(c => c.id === cardId)) return room;
+    room.pass = room.pass || {};
+    if (room.pass[currentPlayerId]) return room; // schon gewählt
+    room.pass[currentPlayerId] = cardId;
+    finalizePassIfReady(room);
+    return room;
+  });
+}
+
+// Wenn jeder Spieler eine Pass-Karte gewählt hat, Karten gleichzeitig an linken Nachbarn übergeben.
+function finalizePassIfReady(room) {
+  const order = playerIds(room);
+  if (!room.pass) return;
+  const ready = order.every(id => room.pass[id]);
+  if (!ready) {
+    const pending = order.filter(id => !room.pass[id]).map(id => playerName(room, id)).join(", ");
+    room.message = `🤹 Warten auf Kartenwahl: ${pending}`;
+    return;
+  }
+  // Extrahiere die gewählten Karten.
+  const picked = {};
+  for (const id of order) {
+    const cardId = room.pass[id];
+    const hand = room.hands?.[id] || [];
+    const card = hand.find(c => c.id === cardId);
+    if (!card) {
+      // Kein gültiger Pass mehr möglich – Pass abbrechen.
+      room.phase = "playing";
+      room.pass = null;
+      room.message = "Kartenweitergabe abgebrochen.";
+      return;
+    }
+    picked[id] = card;
+    room.hands[id] = hand.filter(c => c.id !== cardId);
+  }
+  // Linker Nachbar im Uhrzeigersinn → order[(i+1) % n]
+  const n = order.length;
+  for (let i = 0; i < n; i++) {
+    const giver = order[i];
+    const receiver = order[(i + 1) % n];
+    const card = picked[giver];
+    if (!room.hands[receiver]) room.hands[receiver] = [];
+    room.hands[receiver].push(card);
+  }
+  room.phase = "playing";
+  room.pass = null;
+  room.message = `🤹 Karten weitergegeben. ${playerName(room, room.order[room.turnIndex])} spielt aus.`;
+}
+
+async function playCard(cardId, chosenKind = null, chosenSuit = null) {
   if (!roomCache) return;
   const roomReference = roomRef(currentRoomCode);
   await runTransaction(roomReference, room => {
@@ -1567,13 +1772,16 @@ async function playCard(cardId, chosenKind = null) {
 
     let cardToPlay = actual;
     if (actual.kind === "shapeshifter") {
-      if (!chosenKind) return room; 
+      if (!chosenKind) return room;
       cardToPlay = {
         ...actual,
         kind: chosenKind,
         originalKind: "shapeshifter",
         label: chosenKind === "wizard" ? "Zauberer (W)" : "Narr (W)"
       };
+    } else if (actual.kind === "juggler") {
+      if (!chosenSuit || !SUIT_BY_KEY[chosenSuit]) return room;
+      cardToPlay = { ...actual, chosenSuit };
     }
 
     if (!isLegalPlay(cardToPlay, hand, room.currentTrick || [], room.trumpSuit)) return room;
@@ -1588,14 +1796,17 @@ async function playCard(cardId, chosenKind = null) {
     if (room.currentTrick.length >= order.length) {
       const winnerId = determineTrickWinner(room.currentTrick, room.trumpSuit);
       const hasBomb = room.currentTrick.some(p => p.card.kind === "bomb");
-      
+      const hasJuggler = room.currentTrick.some(p => p.card.kind === "juggler");
+
       if (!hasBomb) {
         room.tricksTaken[winnerId] = (room.tricksTaken[winnerId] || 0) + 1;
       }
       room.trickCount = (room.trickCount || 0) + 1;
-      
+
       room.trickReadyToClear = true;
       room.trickWinner = winnerId;
+      // Jongleur im Stich → Pass-Phase, ABER nicht im letzten Stich der Runde.
+      room.jugglerPending = !!hasJuggler && room.trickCount < room.roundNo;
 
       if (hasBomb) {
         room.message = `💣 BUMM! Stich zerstört. ${playerName(room, winnerId)} darf ausspielen.`;
@@ -1639,6 +1850,9 @@ async function nextRound() {
       room.trickReadyToClear = false;
       room.pendingTrumpChoiceSeat = null;
       room.winnerId = null;
+      room.pass = null;
+      room.jugglerPending = false;
+      room.trickWinner = null;
       room.message = "Neue Partie bereit.";
       return room;
     }
@@ -1716,12 +1930,17 @@ function maybeScheduleBot(state) {
     if (fresh.phase === "playing") {
       const card = botChoosePlay(fresh, currentBotId);
       if (card) {
-        
+
         let chosenKind = null;
         if (card.kind === "shapeshifter") {
           const bid = fresh.bids?.[currentBotId] ?? 0;
           const taken = fresh.tricksTaken?.[currentBotId] ?? 0;
           chosenKind = (taken < bid) ? "wizard" : "jester";
+        }
+
+        let chosenSuit = null;
+        if (card.kind === "juggler") {
+          chosenSuit = botJugglerSuit(fresh, currentBotId);
         }
 
         await runTransaction(roomRef(currentRoomCode), room => {
@@ -1735,6 +1954,8 @@ function maybeScheduleBot(state) {
           let cardToPlay = actual;
           if (actual.kind === "shapeshifter") {
              cardToPlay = { ...actual, kind: chosenKind, originalKind: "shapeshifter", label: chosenKind === "wizard" ? "Zauberer (W)" : "Narr (W)" };
+          } else if (actual.kind === "juggler") {
+             cardToPlay = { ...actual, chosenSuit };
           }
 
           if (!isLegalPlay(cardToPlay, handNow, room.currentTrick || [], room.trumpSuit)) return room;
@@ -1747,14 +1968,16 @@ function maybeScheduleBot(state) {
           if (room.currentTrick.length >= orderNow.length) {
             const winnerId = determineTrickWinner(room.currentTrick, room.trumpSuit);
             const hasBomb = room.currentTrick.some(p => p.card.kind === "bomb");
-            
+            const hasJuggler = room.currentTrick.some(p => p.card.kind === "juggler");
+
             if (!hasBomb) {
               room.tricksTaken[winnerId] = (room.tricksTaken[winnerId] || 0) + 1;
             }
             room.trickCount = (room.trickCount || 0) + 1;
-            
+
             room.trickReadyToClear = true;
             room.trickWinner = winnerId;
+            room.jugglerPending = !!hasJuggler && room.trickCount < room.roundNo;
 
             if (hasBomb) {
               room.message = `💣 BUMM! Stich zerstört. ${playerName(room, winnerId)} darf ausspielen.`;
@@ -1789,6 +2012,22 @@ window.confirmShapeshifter = (chosenKind) => {
         pendingShapeshifterCardId = null;
     }
     document.getElementById('shapeshifterOverlay').classList.add('hidden');
+};
+
+let pendingJugglerCardId = null;
+window.openJugglerModal = (cardId) => {
+    pendingJugglerCardId = cardId;
+    const ov = document.getElementById('jugglerOverlay');
+    if (ov) ov.classList.remove('hidden');
+};
+
+window.confirmJuggler = (chosenSuit) => {
+    if (pendingJugglerCardId && SUIT_BY_KEY[chosenSuit]) {
+        playCard(pendingJugglerCardId, null, chosenSuit);
+        pendingJugglerCardId = null;
+    }
+    const ov = document.getElementById('jugglerOverlay');
+    if (ov) ov.classList.add('hidden');
 };
 
 // TOGGLE CHAT/EMOJI

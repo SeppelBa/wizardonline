@@ -1,0 +1,44 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "rooms": {
+      "$roomCode": {
+        ".read": true,
+        ".write": "$roomCode.matches(/^[A-Z0-9]{4,8}$/)",
+        ".validate": "newData.hasChildren(['hostId','phase']) || !newData.exists()",
+        "phase": {
+          ".validate": "newData.isString() && newData.val().matches(/^(lobby|bidding|playing|choose_trump|round_summary|finished|passing_cards)$/)"
+        },
+        "roundNo":     { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 30" },
+        "maxRound":    { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 30" },
+        "createdAt":   { ".validate": "newData.isNumber()" },
+        "hostId":      { ".validate": "newData.isString() && newData.val().length <= 64" },
+        "anniversaryMode": { ".validate": "newData.isBoolean()" },
+        "strictBidRule":   { ".validate": "newData.isBoolean()" },
+        "players": {
+          "$playerId": {
+            "name":  { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 20" },
+            "score": { ".validate": "newData.isNumber() && newData.val() >= -10000 && newData.val() <= 10000" },
+            "isBot": { ".validate": "newData.isBoolean()" }
+          }
+        },
+        "$other": { ".validate": true }
+      }
+    },
+
+    "global_leaderboard": {
+      ".read": true,
+      "$playerName": {
+        ".write": "$playerName.matches(/^[^.#$\\[\\]]{1,30}$/)",
+        ".validate": "newData.hasChildren(['wins','gamesPlayed','maxScore','totalScore'])",
+        "wins":        { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100000" },
+        "gamesPlayed": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100000" },
+        "maxScore":    { ".validate": "newData.isNumber() && newData.val() >= -10000 && newData.val() <= 10000" },
+        "totalScore":  { ".validate": "newData.isNumber() && newData.val() >= -10000000 && newData.val() <= 10000000" },
+        "$other": { ".validate": false }
+      }
+    }
+  }
+}
