@@ -1736,16 +1736,17 @@ function maybeFillLocalRoomCode() {
   if (currentName) els.nameInput.value = currentName;
 }
 
-// NEU: Funktionen für Emojis
+// TOGGLE CHAT/EMOJI
 window.toggleEmojiBar = () => {
     const bar = document.getElementById('emojiBar');
-    if (bar.style.display === 'none' || bar.style.display === '') {
-        bar.style.display = 'flex';
-    } else {
-        bar.style.display = 'none';
-    }
+    const chat = document.getElementById('chatInputArea');
+    const isHidden = bar.style.display === 'none' || bar.style.display === '';
+    
+    bar.style.display = isHidden ? 'flex' : 'none';
+    if (chat) chat.style.display = isHidden ? 'flex' : 'none';
 };
 
+// EMOJI SENDEN
 window.sendEmoji = async (emoji) => {
   if (!currentRoomCode) return;
   const roomReference = roomRef(currentRoomCode);
@@ -1757,24 +1758,51 @@ window.sendEmoji = async (emoji) => {
     }
   });
   
-  // Leiste nach dem Senden direkt wieder einklappen
   document.getElementById('emojiBar').style.display = 'none';
+  const chat = document.getElementById('chatInputArea');
+  if (chat) chat.style.display = 'none';
 };
 
+// CHAT-NACHRICHT SENDEN
+window.sendChatMessage = async () => {
+    const input = document.getElementById('chatMsgInput');
+    if (!input) return;
+    const msg = input.value.trim();
+    if (!msg || !currentRoomCode) return;
+
+    const roomReference = roomRef(currentRoomCode);
+    await update(roomReference, {
+        lastReaction: {
+            playerName: currentName,
+            text: msg,
+            timestamp: Date.now()
+        }
+    });
+
+    input.value = '';
+    document.getElementById('emojiBar').style.display = 'none';
+    document.getElementById('chatInputArea').style.display = 'none';
+};
+
+// FLIEGENDE NACHRICHTEN/EMOJIS
 function showFloatingEmoji(reaction) {
     const handWrap = document.querySelector('.handWrap');
     if (!handWrap) return;
     
     const container = document.createElement("div");
     container.className = "floating-container";
+    
+    const content = reaction.text ? 
+        `<div class="floating-text">${escapeHtml(reaction.text)}</div>` : 
+        `<div class="floating-emoji">${reaction.emoji}</div>`;
+
     container.innerHTML = `
-        <div class="floating-emoji">${reaction.emoji}</div>
+        ${content}
         <div class="floating-name">${escapeHtml(reaction.playerName)}</div>
     `;
     handWrap.appendChild(container);
-    setTimeout(() => container.remove(), 2500);
+    setTimeout(() => container.remove(), 3000);
 }
-
 
 els.bidMinusBtn.addEventListener("click", () => {
   if (currentSelectedBid > 0) {
