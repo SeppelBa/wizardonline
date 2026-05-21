@@ -442,6 +442,22 @@
     </div>
   </div>
 
+  <div id="jugglerOverlay" class="roundOverlay hidden" style="z-index: 200;">
+    <div class="roundOverlayCard" style="max-width: 320px; text-align: center;">
+      <div class="overlayGlow" style="background: #f59e0b;"></div>
+      <h2 style="margin-bottom: 10px;">🤹‍♂️ Jongleur</h2>
+      <p style="color: var(--muted); margin-bottom: 20px;">Welche Farbe soll der Jongleur annehmen? (Er hat den Wert 7 ½)</p>
+      
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+        <button onclick="confirmJuggler('hearts')" class="secondary" style="font-size: 1.2rem; color: #ef4444;">♥ Herz</button>
+        <button onclick="confirmJuggler('spades')" class="secondary" style="font-size: 1.2rem; color: #94a3b8;">♠ Pik</button>
+        <button onclick="confirmJuggler('clubs')" class="secondary" style="font-size: 1.2rem; color: #10b981;">♣ Kreuz</button>
+        <button onclick="confirmJuggler('diamonds')" class="secondary" style="font-size: 1.2rem; color: #eab308;">♦ Karo</button>
+      </div>
+      <button onclick="document.getElementById('jugglerOverlay').classList.add('hidden')" class="ghost" style="margin-top: 15px; width: 100%;">Abbrechen</button>
+    </div>
+  </div>
+
   <script
     type="module"
     src="app.js"
