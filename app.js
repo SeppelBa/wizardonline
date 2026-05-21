@@ -92,6 +92,7 @@ let roomCache = null;
 let overlayAlreadyShown = false;
 let currentSelectedBid = 0;
 let lastRenderedTimestamp = 0;
+let pendingShapeshifterCardId = null;
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js").catch(() => {});
@@ -158,6 +159,7 @@ function createDeck() {
     deck.push({ id: uid(), kind: "pixie", label: "Fee" });
     deck.push({ id: uid(), kind: "bomb", label: "Bombe" });
     deck.push({ id: uid(), kind: "werewolf", label: "Werwolf" });
+    deck.push({ id: uid(), kind: "shapeshifter", label: "Wandler" });
   }
 
   return shuffle(deck);
@@ -224,7 +226,7 @@ function handOf(room, playerId) {
 
 function sortHand(hand) {
   return hand.slice().sort((a, b) => {
-    const kindOrder = { "wizard": 1, "dragon": 2, "werewolf": 3, "pixie": 4, "bomb": 5, "jester": 6, "card": 7 };
+    const kindOrder = { "wizard": 1, "dragon": 2, "werewolf": 3, "shapeshifter": 4, "pixie": 5, "bomb": 6, "jester": 7, "card": 8 };
     if (kindOrder[a.kind] !== kindOrder[b.kind]) {
       return kindOrder[a.kind] - kindOrder[b.kind];
     }
@@ -255,6 +257,7 @@ function cardLabel(card) {
   if (card.kind === "pixie") return "Fee";
   if (card.kind === "bomb") return "Bombe";
   if (card.kind === "werewolf") return "Werwolf";
+  if (card.kind === "shapeshifter") return "Wandler";
   const suit = SUIT_BY_KEY[card.suit];
   return `${suit ? suit.short : "?"} ${card.rank}`;
 }
@@ -343,6 +346,7 @@ function botStrengthForHand(hand, trumpSuit) {
     else if (card.kind === "werewolf") score -= 6;
     else if (card.kind === "pixie") score -= 8;
     else if (card.kind === "bomb") score -= 10;
+    else if (card.kind === "shapeshifter") score += 30;
     else {
       score += card.rank;
       if (trumpSuit && trumpSuit !== "none" && card.suit === trumpSuit) score += 10;
@@ -814,7 +818,6 @@ function renderRoom(state) {
     }
   }
 
-  // Emoji-Rendern basierend auf Zeitstempel
   if (state.lastReaction && state.lastReaction.timestamp > lastRenderedTimestamp) {
       showFloatingEmoji(state.lastReaction);
       lastRenderedTimestamp = state.lastReaction.timestamp;
@@ -887,7 +890,7 @@ function renderHand(state) {
     let badgeClass = "";
     if (state?.trumpCard) {
       if (state.trumpCard.kind === "wizard" || state.trumpCard.kind === "dragon" || state.trumpCard.kind === "werewolf") {
-        let symbol = state.trumpCard.kind === "dragon" ? "🐉" : (state.trumpCard.kind === "werewolf" ? "🐺" : "🪄");
+        let symbol = state.trumpCard.kind === "dragon" ? "🐉" : (state.trumpCard.kind === "werewolf" ? "🐺" : "🥲");
         
         if (state.trumpSuit === "none") {
           trumpIndicator = `${symbol} Kein Trumpf`;
@@ -928,7 +931,13 @@ function renderHand(state) {
     el.classList.toggle("clickable", playable && allowed);
     el.classList.toggle("disabled", playable && !allowed);
     if (playable && allowed) {
-      el.addEventListener("click", () => playCard(card.id));
+      el.addEventListener("click", () => {
+        if (card.kind === "shapeshifter") {
+            window.openShapeshifterModal(card.id);
+        } else {
+            playCard(card.id);
+        }
+      });
     }
     els.hand.appendChild(el);
   });
@@ -1024,6 +1033,7 @@ function makeCardElement(card, showPlayerTag = false, playerTag = "") {
   else if (card.kind === "pixie") cls = "specialPixie";
   else if (card.kind === "bomb") cls = "specialBomb";
   else if (card.kind === "werewolf") cls = "specialWerewolf";
+  else if (card.kind === "shapeshifter" || card.originalKind === "shapeshifter") cls = "specialShapeshifter";
   else cls = SUIT_BY_KEY[card.suit]?.css || "";
 
   el.className = `card ${cls}`;
@@ -1031,12 +1041,18 @@ function makeCardElement(card, showPlayerTag = false, playerTag = "") {
   
   let top = "";
   if (card.kind === "card") top = suit.short;
-  else if (card.kind === "wizard") top = "🪄";
+  else if (card.kind === "wizard") top = "🥲";
   else if (card.kind === "jester") top = "🎭";
   else if (card.kind === "dragon") top = "🐉";
   else if (card.kind === "pixie") top = "🧚";
   else if (card.kind === "bomb") top = "💣";
   else if (card.kind === "werewolf") top = "🐺";
+
+  if (card.originalKind === "shapeshifter") {
+      top = card.kind === "wizard" ? "🥲 (W)" : "🎭 (W)";
+  } else if (card.kind === "shapeshifter") {
+      top = "🌗";
+  }
 
   el.innerHTML = `
     <div class="top"><span>${top}</span>${playerTag ? `<span class="cardOwnerTag">${escapeHtml(playerTag)}</span>` : ""}</div>
@@ -1537,7 +1553,7 @@ async function sendBid() {
   }
 }
 
-async function playCard(cardId) {
+async function playCard(cardId, chosenKind = null) {
   if (!roomCache) return;
   const roomReference = roomRef(currentRoomCode);
   await runTransaction(roomReference, room => {
@@ -1546,15 +1562,27 @@ async function playCard(cardId) {
     const turnPlayerId = currentTurnPlayerId(room);
     if (turnPlayerId !== currentPlayerId) return room;
     const hand = room.hands?.[currentPlayerId] || [];
-    const card = hand.find(c => c.id === cardId);
-    if (!card) return room;
-    if (!isLegalPlay(card, hand, room.currentTrick || [], room.trumpSuit)) return room;
+    const actual = hand.find(c => c.id === cardId);
+    if (!actual) return room;
+
+    let cardToPlay = actual;
+    if (actual.kind === "shapeshifter") {
+      if (!chosenKind) return room; 
+      cardToPlay = {
+        ...actual,
+        kind: chosenKind,
+        originalKind: "shapeshifter",
+        label: chosenKind === "wizard" ? "Zauberer (W)" : "Narr (W)"
+      };
+    }
+
+    if (!isLegalPlay(cardToPlay, hand, room.currentTrick || [], room.trumpSuit)) return room;
 
     room.hands[currentPlayerId] = hand.filter(c => c.id !== cardId);
     room.currentTrick = room.currentTrick || [];
     room.currentTrick.push({
       playerId: currentPlayerId,
-      card
+      card: cardToPlay
     });
 
     if (room.currentTrick.length >= order.length) {
@@ -1688,6 +1716,14 @@ function maybeScheduleBot(state) {
     if (fresh.phase === "playing") {
       const card = botChoosePlay(fresh, currentBotId);
       if (card) {
+        
+        let chosenKind = null;
+        if (card.kind === "shapeshifter") {
+          const bid = fresh.bids?.[currentBotId] ?? 0;
+          const taken = fresh.tricksTaken?.[currentBotId] ?? 0;
+          chosenKind = (taken < bid) ? "wizard" : "jester";
+        }
+
         await runTransaction(roomRef(currentRoomCode), room => {
           if (!room || room.phase !== "playing") return room;
           const turnPlayer = currentTurnPlayerId(room);
@@ -1695,11 +1731,17 @@ function maybeScheduleBot(state) {
           const handNow = room.hands?.[currentBotId] || [];
           const actual = handNow.find(c => c.id === card.id);
           if (!actual) return room;
-          if (!isLegalPlay(actual, handNow, room.currentTrick || [], room.trumpSuit)) return room;
+
+          let cardToPlay = actual;
+          if (actual.kind === "shapeshifter") {
+             cardToPlay = { ...actual, kind: chosenKind, originalKind: "shapeshifter", label: chosenKind === "wizard" ? "Zauberer (W)" : "Narr (W)" };
+          }
+
+          if (!isLegalPlay(cardToPlay, handNow, room.currentTrick || [], room.trumpSuit)) return room;
 
           room.hands[currentBotId] = handNow.filter(c => c.id !== actual.id);
           room.currentTrick = room.currentTrick || [];
-          room.currentTrick.push({ playerId: currentBotId, card: actual });
+          room.currentTrick.push({ playerId: currentBotId, card: cardToPlay });
 
           const orderNow = playerIds(room);
           if (room.currentTrick.length >= orderNow.length) {
@@ -1735,6 +1777,19 @@ function maybeFillLocalRoomCode() {
   if (saved) els.roomInput.value = saved;
   if (currentName) els.nameInput.value = currentName;
 }
+
+window.openShapeshifterModal = (cardId) => {
+    pendingShapeshifterCardId = cardId;
+    document.getElementById('shapeshifterOverlay').classList.remove('hidden');
+};
+
+window.confirmShapeshifter = (chosenKind) => {
+    if (pendingShapeshifterCardId) {
+        playCard(pendingShapeshifterCardId, chosenKind);
+        pendingShapeshifterCardId = null;
+    }
+    document.getElementById('shapeshifterOverlay').classList.add('hidden');
+};
 
 // TOGGLE CHAT/EMOJI
 window.toggleEmojiBar = () => {
