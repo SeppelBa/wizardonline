@@ -1090,6 +1090,13 @@ button:disabled{
   color: #e7e5e4 !important; 
 }
 
+.card.specialShapeshifter { 
+  background: linear-gradient(135deg, #7c3aed 0%, #475569 100%) !important; 
+  border: 2px solid #a855f7 !important; 
+  box-shadow: 0 0 15px rgba(168, 85, 247, 0.5) !important; 
+  color: white !important; 
+}
+
 /* MOBILE */
 @media(max-width:640px){
 
