@@ -1097,6 +1097,13 @@ button:disabled{
   color: white !important; 
 }
 
+.card.specialJuggler { 
+  background: linear-gradient(135deg, #ea580c 0%, #db2777 100%) !important; 
+  border: 2px solid #f97316 !important; 
+  box-shadow: 0 0 15px rgba(249, 115, 22, 0.5) !important; 
+  color: white !important; 
+}
+
 /* MOBILE */
 @media(max-width:640px){
 
