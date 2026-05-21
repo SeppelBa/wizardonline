@@ -10,7 +10,7 @@ Dieses Projekt ist für GitHub Pages + Firebase Realtime Database gedacht.
 - Bots
 - mobile Oberfläche
 - PWA / Homescreen-Installierbar
-- Jubiläums-Sonderkarten inkl. Jongleur (Wert 7½, Kartenweitergabe an den linken Nachbarn)
+- Jubiläums-Sonderkarten inkl. Jongleur (Wert 7½, Kartenweitergabe an den linken Nachbarn) und Wolke (Wert 9¾, ±1-Anpassung der Ansage am Rundenende)
 
 ## So richtest du es ein
 
@@ -27,6 +27,14 @@ Dieses Projekt ist für GitHub Pages + Firebase Realtime Database gedacht.
 - Wenn mindestens 2 Spieler drin sind, startet der Host das Spiel.
 - Bots kannst du in der Lobby hinzufügen.
 - Im Einstellungen-Dialog lassen sich Jubiläums-Sonderkarten aktivieren.
+
+## Wolke (Sonderkarte)
+- Wert 9¾, kann immer gespielt werden (auch wenn Bedienen möglich wäre).
+- Beim Ausspielen wählt der Spieler eine Farbe; auch Trumpf möglich.
+- Wird die Wolke als Trumpfkarte aufgedeckt, wählt der Geber den Trumpf.
+- Wenn die Wolke den Stich eröffnet, ist die angesagte Farbe die Bedienfarbe.
+- Liegt die Wolke am Ende einer Stichrunde in den gewonnenen Stichen eines Spielers, muss dieser seine Stichansage um +1 oder -1 anpassen.
+- Wolke + Bombe im gleichen Stich: keine Anpassung (Stich verfällt, kein Gewinner).
 
 ## Jongleur (Sonderkarte)
 - Wert 7½, kann immer gespielt werden (auch wenn Bedienen möglich wäre).

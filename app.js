@@ -161,6 +161,7 @@ function createDeck() {
     deck.push({ id: uid(), kind: "werewolf", label: "Werwolf" });
     deck.push({ id: uid(), kind: "shapeshifter", label: "Wandler" });
     deck.push({ id: uid(), kind: "juggler", label: "Jongleur" });
+    deck.push({ id: uid(), kind: "cloud", label: "Wolke" });
   }
 
   return shuffle(deck);
@@ -227,7 +228,7 @@ function handOf(room, playerId) {
 
 function sortHand(hand) {
   return hand.slice().sort((a, b) => {
-    const kindOrder = { "wizard": 1, "dragon": 2, "werewolf": 3, "shapeshifter": 4, "juggler": 5, "pixie": 6, "bomb": 7, "jester": 8, "card": 9 };
+    const kindOrder = { "wizard": 1, "dragon": 2, "werewolf": 3, "shapeshifter": 4, "cloud": 5, "juggler": 6, "pixie": 7, "bomb": 8, "jester": 9, "card": 10 };
     if (kindOrder[a.kind] !== kindOrder[b.kind]) {
       return kindOrder[a.kind] - kindOrder[b.kind];
     }
@@ -266,6 +267,13 @@ function cardLabel(card) {
     }
     return "Jongleur 7½";
   }
+  if (card.kind === "cloud") {
+    if (card.chosenSuit) {
+      const s = SUIT_BY_KEY[card.chosenSuit];
+      return `${s ? s.short : "?"} 9¾`;
+    }
+    return "Wolke 9¾";
+  }
   const suit = SUIT_BY_KEY[card.suit];
   return `${suit ? suit.short : "?"} ${card.rank}`;
 }
@@ -284,6 +292,13 @@ function cardStrength(card, trumpSuit, ledSuit) {
     else if (ledSuit && suit === ledSuit) v += 50;
     return v;
   }
+  if (card.kind === "cloud") {
+    const suit = card.chosenSuit;
+    let v = 9.75;
+    if (trumpSuit && trumpSuit !== "none" && suit === trumpSuit) v += 100;
+    else if (ledSuit && suit === ledSuit) v += 50;
+    return v;
+  }
   let v = card.rank;
   if (trumpSuit && trumpSuit !== "none" && card.suit === trumpSuit) v += 100;
   else if (ledSuit && card.suit === ledSuit) v += 50;
@@ -295,6 +310,7 @@ function getLedSuit(trick) {
     if (play.card?.kind === "dragon" || play.card?.kind === "wizard") return { wizardLed: true, ledSuit: null };
     if (play.card?.kind === "jester" || play.card?.kind === "werewolf" || play.card?.kind === "pixie" || play.card?.kind === "bomb") continue;
     if (play.card?.kind === "juggler" && play.card.chosenSuit) return { wizardLed: false, ledSuit: play.card.chosenSuit };
+    if (play.card?.kind === "cloud" && play.card.chosenSuit) return { wizardLed: false, ledSuit: play.card.chosenSuit };
     if (play.card?.kind === "card") return { wizardLed: false, ledSuit: play.card.suit };
   }
   return { wizardLed: false, ledSuit: null };
@@ -306,8 +322,8 @@ function legalCards(hand, trick, trumpSuit) {
   if (info.wizardLed || !info.ledSuit) return hand.slice();
   const hasSuit = hand.some(c => c.kind === "card" && c.suit === info.ledSuit);
   if (!hasSuit) return hand.slice();
-  // Jongleur ist immer legal, auch wenn man bedienen könnte.
-  return hand.filter(c => c.kind === "juggler" || c.kind !== "card" || c.suit === info.ledSuit);
+  // Jongleur und Wolke sind immer legal, auch wenn man bedienen könnte.
+  return hand.filter(c => c.kind === "juggler" || c.kind === "cloud" || c.kind !== "card" || c.suit === info.ledSuit);
 }
 
 function isLegalPlay(card, hand, trick, trumpSuit) {
@@ -320,6 +336,7 @@ function effectiveCardForTrick(card) {
   if (!card) return null;
   if (card.kind === "card") return { suit: card.suit, rank: card.rank };
   if (card.kind === "juggler" && card.chosenSuit) return { suit: card.chosenSuit, rank: 7.5 };
+  if (card.kind === "cloud" && card.chosenSuit) return { suit: card.chosenSuit, rank: 9.75 };
   return null;
 }
 
@@ -379,6 +396,8 @@ function botStrengthForHand(hand, trumpSuit) {
     else if (card.kind === "pixie") score -= 8;
     else if (card.kind === "bomb") score -= 10;
     else if (card.kind === "shapeshifter") score += 30;
+    else if (card.kind === "cloud") score += 12;
+    else if (card.kind === "juggler") score += 9;
     else {
       score += card.rank;
       if (trumpSuit && trumpSuit !== "none" && card.suit === trumpSuit) score += 10;
@@ -399,7 +418,7 @@ function botBid(room, playerId) {
   return estimate;
 }
 
-function botJugglerSuit(room, playerId) {
+function botPickAssignedSuit(room, playerId) {
   const trump = room.trumpSuit;
   if (trump && trump !== "none") return trump;
   // Stärkste Farbe in der Hand (mit Bonus für hohe Karten)
@@ -411,6 +430,8 @@ function botJugglerSuit(room, playerId) {
   }
   return Object.entries(tally).sort((a, b) => b[1] - a[1])[0][0];
 }
+const botJugglerSuit = botPickAssignedSuit;
+const botCloudSuit = botPickAssignedSuit;
 
 function botPassCardChoice(room, playerId) {
   const hand = handOf(room, playerId);
@@ -515,7 +536,7 @@ function buildRoundState(room, roundNo) {
     pendingTrumpChoiceSeat = dealerIndex;
     message = `🐺 Werwolf aufgedeckt! Geber ${playerName(room, order[dealerIndex])} wählt Trumpf.`;
   }
-  else if (trumpCard?.kind === "wizard" || trumpCard?.kind === "dragon" || trumpCard?.kind === "juggler") {
+  else if (trumpCard?.kind === "wizard" || trumpCard?.kind === "dragon" || trumpCard?.kind === "juggler" || trumpCard?.kind === "cloud") {
     phase = "choose_trump";
     turnIndex = dealerIndex;
     pendingTrumpChoiceSeat = dealerIndex;
@@ -552,6 +573,9 @@ function buildRoundState(room, roundNo) {
     pass: null,
     jugglerPending: false,
     trickWinner: null,
+    cloudTricks: {},
+    cloudAdjust: null,
+    cloudAdjustTargets: null,
     message
   };
 }
@@ -620,6 +644,22 @@ async function savePlayerStats(room) {
 }
 
 function finishRoundAndMaybeNext(room) {
+  // Wolken-Effekt: Spieler mit gewonnenem Stich, der eine Wolke enthielt (ohne Bombe),
+  // müssen ihre Vorhersage um +1 oder -1 anpassen, bevor die Runde gewertet wird.
+  const order = playerIds(room);
+  const targets = order.filter(id => (room.cloudTricks?.[id] || 0) > 0);
+  if (targets.length > 0) {
+    room.phase = "cloud_adjust";
+    room.cloudAdjust = {};
+    room.cloudAdjustTargets = targets;
+    const names = targets.map(id => playerName(room, id)).join(", ");
+    room.message = `☁️ Wolke! ${names} muss${targets.length === 1 ? "" : "en"} die Ansage um ±1 anpassen.`;
+    return room;
+  }
+  return scoreFinishedRound(room);
+}
+
+function scoreFinishedRound(room) {
   const order = playerIds(room);
   const roundPoints = {};
 
@@ -627,7 +667,7 @@ function finishRoundAndMaybeNext(room) {
     const bid = room.bids?.[id] ?? 0;
     const taken = room.tricksTaken?.[id] || 0;
     const diff = scoreRound(bid, taken);
-    
+
     room.players[id].score = (room.players[id].score || 0) + diff;
     roundPoints[id] = diff;
   }
@@ -638,6 +678,11 @@ function finishRoundAndMaybeNext(room) {
     points: roundPoints
   });
 
+  // Cloud-Felder aufräumen
+  room.cloudTricks = {};
+  room.cloudAdjust = null;
+  room.cloudAdjustTargets = null;
+
   if (room.roundNo >= room.maxRound) {
     room.phase = "finished";
     const winner = highestScoreWinner(room);
@@ -647,15 +692,28 @@ function finishRoundAndMaybeNext(room) {
     room.currentTrick = [];
     room.bidStartIndex = null;
     room.turnIndex = null;
-    
+
     savePlayerStats(room);
-    
+
     return room;
   }
 
   room.phase = "round_summary";
   room.message = "Runde beendet! Der Host startet gleich die nächste Runde.";
   return room;
+}
+
+function finalizeCloudAdjustIfReady(room) {
+  const targets = room.cloudAdjustTargets || [];
+  if (!targets.length) return;
+  const ready = targets.every(id => room.cloudAdjust && room.cloudAdjust[id] && room.cloudAdjust[id].done);
+  if (!ready) {
+    const pending = targets.filter(id => !(room.cloudAdjust && room.cloudAdjust[id] && room.cloudAdjust[id].done))
+      .map(id => playerName(room, id)).join(", ");
+    room.message = `☁️ Warten auf Wolken-Anpassung: ${pending}`;
+    return;
+  }
+  scoreFinishedRound(room);
 }
 
 function allBidsPlaced(room) {
@@ -726,6 +784,7 @@ function nicePhase(phase) {
     bidding: "Ansagen",
     playing: "Spielzug",
     passing_cards: "Karten weitergeben",
+    cloud_adjust: "Wolken-Anpassung",
     round_summary: "Rundenende",
     finished: "Fertig"
   };
@@ -734,7 +793,7 @@ function nicePhase(phase) {
 
 function renderTrump(state) {
   if (!state?.trumpCard) return "—";
-  if (state.trumpCard.kind === "wizard" || state.trumpCard.kind === "dragon" || state.trumpCard.kind === "werewolf" || state.trumpCard.kind === "juggler") {
+  if (state.trumpCard.kind === "wizard" || state.trumpCard.kind === "dragon" || state.trumpCard.kind === "werewolf" || state.trumpCard.kind === "juggler" || state.trumpCard.kind === "cloud") {
      if (state.trumpSuit === "none") return "Wahl: Kein";
      if (state.trumpSuit && state.phase !== "choose_trump") {
          return "Wahl: " + (SUIT_BY_KEY[state.trumpSuit]?.short || "");
@@ -813,6 +872,8 @@ function renderRoom(state) {
       trumpChoiceMsg = "🐉 Roaaar! Drache aufgedeckt — Trumpf wählen";
   } else if (state.trumpCard?.kind === "juggler") {
       trumpChoiceMsg = "🤹 Jongleur aufgedeckt — Geber wählt Trumpf";
+  } else if (state.trumpCard?.kind === "cloud") {
+      trumpChoiceMsg = "☁️ Wolke aufgedeckt — Geber wählt Trumpf";
   }
 
   if (els.trumpChoiceHint) {
@@ -827,9 +888,11 @@ function renderRoom(state) {
         ? `Es wird im Uhrzeigersinn gespielt.`
         : state.phase === "passing_cards"
           ? `🤹 Jongleur! Jeder gibt eine Karte verdeckt an den linken Nachbarn.`
-          : state.phase === "finished"
-            ? `Spiel beendet.`
-            : `Lobby.`);
+          : state.phase === "cloud_adjust"
+            ? `☁️ Wolke! Betroffene Spieler müssen ihre Ansage um ±1 ändern.`
+            : state.phase === "finished"
+              ? `Spiel beendet.`
+              : `Lobby.`);
 
   const passingDone = state.phase === "passing_cards" && state.pass && state.pass[currentPlayerId];
   els.handHint.textContent = state.phase === "playing"
@@ -840,9 +903,13 @@ function renderRoom(state) {
         ? (state.pendingTrumpChoiceSeat === order.indexOf(currentPlayerId) ? "Du darfst Trumpf wählen." : `Warten auf ${playerName(state, order[state.pendingTrumpChoiceSeat])}.`)
         : state.phase === "passing_cards"
           ? (passingDone ? "Karte gewählt. Warten auf die anderen…" : "Wähle eine Karte für den linken Nachbarn.")
-          : state.phase === "round_summary"
-            ? "Runde vorbei! Ergebnisse werden angezeigt."
-            : "Keine Kartenphase.";
+          : state.phase === "cloud_adjust"
+            ? (state.cloudAdjustTargets?.includes(currentPlayerId)
+                ? (state.cloudAdjust?.[currentPlayerId]?.done ? "Anpassung gesendet. Warten…" : "Wähle +1 oder -1 für deine Ansage.")
+                : "Warten auf Wolken-Anpassung.")
+            : state.phase === "round_summary"
+              ? "Runde vorbei! Ergebnisse werden angezeigt."
+              : "Keine Kartenphase.";
 
   els.trickInfo.textContent = state.phase === "playing"
     ? `Stiche in dieser Runde: ${state.trickCount}/${roundSize(state)}`
@@ -913,6 +980,79 @@ function renderRoom(state) {
 
   maybeScheduleBot(state);
   maybeAutoPassBots(state);
+  maybeAutoCloudAdjustBots(state);
+  syncCloudAdjustOverlay(state);
+}
+
+function botCloudDelta(room, playerId) {
+  const bid = room.bids?.[playerId] ?? 0;
+  const taken = room.tricksTaken?.[playerId] ?? 0;
+  const round = room.roundNo || 1;
+  let delta;
+  if (taken > bid) delta = 1;
+  else if (taken < bid) delta = -1;
+  else delta = bid > 0 ? -1 : 1;
+  // Clamp auf erlaubten Bereich
+  if (bid + delta < 0) delta = 1;
+  if (bid + delta > round) delta = -1;
+  return delta;
+}
+
+function maybeAutoCloudAdjustBots(state) {
+  if (!state || state.phase !== "cloud_adjust") return;
+  if (state.hostId !== currentPlayerId) return;
+  const targets = state.cloudAdjustTargets || [];
+  const needs = targets.filter(id => isBot(state, id) && !(state.cloudAdjust && state.cloudAdjust[id] && state.cloudAdjust[id].done));
+  if (!needs.length) return;
+  if (window.__cloudAdjustBotsTimeout) return;
+  window.__cloudAdjustBotsTimeout = setTimeout(async () => {
+    window.__cloudAdjustBotsTimeout = null;
+    await runTransaction(roomRef(currentRoomCode), room => {
+      if (!room || room.phase !== "cloud_adjust") return room;
+      const tg = room.cloudAdjustTargets || [];
+      room.cloudAdjust = room.cloudAdjust || {};
+      for (const id of tg) {
+        if (!isBot(room, id)) continue;
+        if (room.cloudAdjust[id] && room.cloudAdjust[id].done) continue;
+        const delta = botCloudDelta(room, id);
+        const currentBid = room.bids?.[id] ?? 0;
+        const next = currentBid + delta;
+        if (next < 0 || next > (room.roundNo || 1)) continue;
+        room.bids[id] = next;
+        room.cloudAdjust[id] = { done: true, delta };
+      }
+      finalizeCloudAdjustIfReady(room);
+      return room;
+    });
+  }, 700 + Math.random() * 400);
+}
+
+function syncCloudAdjustOverlay(state) {
+  const ov = document.getElementById("cloudAdjustOverlay");
+  if (!ov) return;
+  const targets = state?.cloudAdjustTargets || [];
+  const isMyTurn = state?.phase === "cloud_adjust"
+    && targets.includes(currentPlayerId)
+    && !(state.cloudAdjust && state.cloudAdjust[currentPlayerId] && state.cloudAdjust[currentPlayerId].done);
+  if (!isMyTurn) {
+    ov.classList.add("hidden");
+    return;
+  }
+  const bid = state.bids?.[currentPlayerId] ?? 0;
+  const taken = state.tricksTaken?.[currentPlayerId] ?? 0;
+  const round = state.roundNo || 1;
+  const bidEl = document.getElementById("cloudAdjustBid");
+  const takenEl = document.getElementById("cloudAdjustTaken");
+  if (bidEl) bidEl.textContent = bid;
+  if (takenEl) takenEl.textContent = taken;
+  // Buttons je nach Grenzbereich deaktivieren
+  const buttons = ov.querySelectorAll("button");
+  buttons.forEach(b => {
+    const onclick = b.getAttribute("onclick") || "";
+    if (onclick.includes("(-1)")) b.disabled = (bid - 1 < 0);
+    if (onclick.includes("(1)")) b.disabled = (bid + 1 > round);
+  });
+  ov.classList.remove("hidden");
 }
 
 // Während passing_cards: Host wählt für jeden Bot eine sinnvolle Karte automatisch.
@@ -974,6 +1114,13 @@ function renderTrick(state) {
     return;
   }
 
+  if (state.phase === "cloud_adjust") {
+    const targets = state.cloudAdjustTargets || [];
+    const waitingFor = targets.filter(id => !(state.cloudAdjust && state.cloudAdjust[id] && state.cloudAdjust[id].done)).map(id => playerName(state, id));
+    els.trickTable.innerHTML = `<div class="hint" style="font-size:1rem; font-weight:600; color:#38bdf8;">☁️ Wolke: Ansage ±1${waitingFor.length ? `<br><span style="color:var(--muted); font-size:.85rem; font-weight:500;">Warten auf: ${waitingFor.map(escapeHtml).join(", ")}</span>` : ""}</div>`;
+    return;
+  }
+
   if (state.phase === "round_summary") {
     if (state.hostId === currentPlayerId) {
       const btn = document.createElement("button");
@@ -1011,10 +1158,11 @@ function renderHand(state) {
     let trumpIndicator = "—";
     let badgeClass = "";
     if (state?.trumpCard) {
-      if (state.trumpCard.kind === "wizard" || state.trumpCard.kind === "dragon" || state.trumpCard.kind === "werewolf" || state.trumpCard.kind === "juggler") {
+      if (state.trumpCard.kind === "wizard" || state.trumpCard.kind === "dragon" || state.trumpCard.kind === "werewolf" || state.trumpCard.kind === "juggler" || state.trumpCard.kind === "cloud") {
         let symbol = state.trumpCard.kind === "dragon" ? "🐉"
           : state.trumpCard.kind === "werewolf" ? "🐺"
           : state.trumpCard.kind === "juggler" ? "🤹"
+          : state.trumpCard.kind === "cloud" ? "☁️"
           : "🪄";
         
         if (state.trumpSuit === "none") {
@@ -1071,6 +1219,8 @@ function renderHand(state) {
               window.openShapeshifterModal(card.id);
           } else if (card.kind === "juggler") {
               window.openJugglerModal(card.id);
+          } else if (card.kind === "cloud") {
+              window.openCloudModal(card.id);
           } else {
               playCard(card.id);
           }
@@ -1173,6 +1323,7 @@ function makeCardElement(card, showPlayerTag = false, playerTag = "") {
   else if (card.kind === "werewolf") cls = "specialWerewolf";
   else if (card.kind === "shapeshifter" || card.originalKind === "shapeshifter") cls = "specialShapeshifter";
   else if (card.kind === "juggler") cls = "specialJuggler";
+  else if (card.kind === "cloud") cls = "specialCloud";
   else cls = SUIT_BY_KEY[card.suit]?.css || "";
 
   el.className = `card ${cls}`;
@@ -1189,6 +1340,10 @@ function makeCardElement(card, showPlayerTag = false, playerTag = "") {
   else if (card.kind === "juggler") {
     const s = card.chosenSuit ? SUIT_BY_KEY[card.chosenSuit]?.short : null;
     top = s ? `🤹 ${s}` : "🤹";
+  }
+  else if (card.kind === "cloud") {
+    const s = card.chosenSuit ? SUIT_BY_KEY[card.chosenSuit]?.short : null;
+    top = s ? `☁️ ${s}` : "☁️";
   }
 
   if (card.originalKind === "shapeshifter") {
@@ -1405,6 +1560,9 @@ function roomStateOrDefault(roomCode, playerName, playerId) {
     pass: null,
     jugglerPending: false,
     trickWinner: null,
+    cloudTricks: {},
+    cloudAdjust: null,
+    cloudAdjustTargets: null,
     winnerId: null,
     message: "Lobby erstellt."
   };
@@ -1593,6 +1751,9 @@ async function resetToLobby() {
     room.pass = null;
     room.jugglerPending = false;
     room.trickWinner = null;
+    room.cloudTricks = {};
+    room.cloudAdjust = null;
+    room.cloudAdjustTargets = null;
     room.message = "Zur Lobby zurückgesetzt.";
     return room;
   });
@@ -1779,7 +1940,7 @@ async function playCard(cardId, chosenKind = null, chosenSuit = null) {
         originalKind: "shapeshifter",
         label: chosenKind === "wizard" ? "Zauberer (W)" : "Narr (W)"
       };
-    } else if (actual.kind === "juggler") {
+    } else if (actual.kind === "juggler" || actual.kind === "cloud") {
       if (!chosenSuit || !SUIT_BY_KEY[chosenSuit]) return room;
       cardToPlay = { ...actual, chosenSuit };
     }
@@ -1797,9 +1958,15 @@ async function playCard(cardId, chosenKind = null, chosenSuit = null) {
       const winnerId = determineTrickWinner(room.currentTrick, room.trumpSuit);
       const hasBomb = room.currentTrick.some(p => p.card.kind === "bomb");
       const hasJuggler = room.currentTrick.some(p => p.card.kind === "juggler");
+      const hasCloud = room.currentTrick.some(p => p.card.kind === "cloud");
 
       if (!hasBomb) {
         room.tricksTaken[winnerId] = (room.tricksTaken[winnerId] || 0) + 1;
+        // Wolke im gewonnenen Stich (ohne Bombe) → zählt für Bid-Anpassung am Rundenende
+        if (hasCloud) {
+          room.cloudTricks = room.cloudTricks || {};
+          room.cloudTricks[winnerId] = (room.cloudTricks[winnerId] || 0) + 1;
+        }
       }
       room.trickCount = (room.trickCount || 0) + 1;
 
@@ -1853,6 +2020,9 @@ async function nextRound() {
       room.pass = null;
       room.jugglerPending = false;
       room.trickWinner = null;
+      room.cloudTricks = {};
+      room.cloudAdjust = null;
+      room.cloudAdjustTargets = null;
       room.message = "Neue Partie bereit.";
       return room;
     }
@@ -1939,8 +2109,8 @@ function maybeScheduleBot(state) {
         }
 
         let chosenSuit = null;
-        if (card.kind === "juggler") {
-          chosenSuit = botJugglerSuit(fresh, currentBotId);
+        if (card.kind === "juggler" || card.kind === "cloud") {
+          chosenSuit = botPickAssignedSuit(fresh, currentBotId);
         }
 
         await runTransaction(roomRef(currentRoomCode), room => {
@@ -1954,7 +2124,7 @@ function maybeScheduleBot(state) {
           let cardToPlay = actual;
           if (actual.kind === "shapeshifter") {
              cardToPlay = { ...actual, kind: chosenKind, originalKind: "shapeshifter", label: chosenKind === "wizard" ? "Zauberer (W)" : "Narr (W)" };
-          } else if (actual.kind === "juggler") {
+          } else if (actual.kind === "juggler" || actual.kind === "cloud") {
              cardToPlay = { ...actual, chosenSuit };
           }
 
@@ -2028,6 +2198,44 @@ window.confirmJuggler = (chosenSuit) => {
     }
     const ov = document.getElementById('jugglerOverlay');
     if (ov) ov.classList.add('hidden');
+};
+
+let pendingCloudCardId = null;
+window.openCloudModal = (cardId) => {
+    pendingCloudCardId = cardId;
+    const ov = document.getElementById('cloudOverlay');
+    if (ov) ov.classList.remove('hidden');
+};
+
+window.confirmCloud = (chosenSuit) => {
+    if (pendingCloudCardId && SUIT_BY_KEY[chosenSuit]) {
+        playCard(pendingCloudCardId, null, chosenSuit);
+        pendingCloudCardId = null;
+    }
+    const ov = document.getElementById('cloudOverlay');
+    if (ov) ov.classList.add('hidden');
+};
+
+// Bid-Adjust nach Wolken-Stich: ±1 oder 0 (falls keine Änderung erlaubt? Regel zwingt ±1)
+window.confirmCloudAdjust = async (delta) => {
+    if (delta !== 1 && delta !== -1) return;
+    if (!roomCache || roomCache.phase !== "cloud_adjust") return;
+    await runTransaction(roomRef(currentRoomCode), room => {
+        if (!room || room.phase !== "cloud_adjust") return room;
+        room.cloudAdjust = room.cloudAdjust || {};
+        if (room.cloudAdjust[currentPlayerId] && room.cloudAdjust[currentPlayerId].done) return room;
+        const targets = room.cloudAdjustTargets || [];
+        if (!targets.includes(currentPlayerId)) return room;
+        const currentBid = room.bids?.[currentPlayerId] ?? 0;
+        const round = room.roundNo || 1;
+        let next = currentBid + delta;
+        // Bid muss in [0, round] bleiben
+        if (next < 0 || next > round) return room;
+        room.bids[currentPlayerId] = next;
+        room.cloudAdjust[currentPlayerId] = { done: true, delta };
+        finalizeCloudAdjustIfReady(room);
+        return room;
+    });
 };
 
 // TOGGLE CHAT/EMOJI

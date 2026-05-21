@@ -9,7 +9,7 @@
         ".write": "$roomCode.matches(/^[A-Z0-9]{4,8}$/)",
         ".validate": "newData.hasChildren(['hostId','phase']) || !newData.exists()",
         "phase": {
-          ".validate": "newData.isString() && newData.val().matches(/^(lobby|bidding|playing|choose_trump|round_summary|finished|passing_cards)$/)"
+          ".validate": "newData.isString() && newData.val().matches(/^(lobby|bidding|playing|choose_trump|round_summary|finished|passing_cards|cloud_adjust)$/)"
         },
         "roundNo":     { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 30" },
         "maxRound":    { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 30" },
