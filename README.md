@@ -23,10 +23,12 @@ Dieses Projekt ist für GitHub Pages + Firebase Realtime Database gedacht.
 
 ## Spielen
 - Einer erstellt den Raum.
-- Die anderen treten mit demselben Raumcode bei.
+- Die anderen treten mit demselben Raumcode bei (oder über den Teilen-Button: WhatsApp, Web Share, QR-Code).
 - Wenn mindestens 2 Spieler drin sind, startet der Host das Spiel.
 - Bots kannst du in der Lobby hinzufügen.
-- Im Einstellungen-Dialog lassen sich Jubiläums-Sonderkarten aktivieren.
+- Im Einstellungen-Dialog lassen sich einzelne Sonderkarten an-/ausschalten und die „Schnelle Runde" (Auto-Weiter) aktivieren.
+- Spieler, die kurz die Verbindung verlieren, werden als „offline" markiert und können einfach wieder reinkommen – ihre Punkte und ihr Platz bleiben erhalten.
+- Nach allen Runden zeigt ein eigener Gewinner-Screen das Podium an. Das Ergebnis lässt sich kopieren.
 
 ## Wolke (Sonderkarte)
 - Wert 9¾, kann immer gespielt werden (auch wenn Bedienen möglich wäre).

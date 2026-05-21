@@ -17,11 +17,19 @@
         "hostId":      { ".validate": "newData.isString() && newData.val().length <= 64" },
         "anniversaryMode": { ".validate": "newData.isBoolean()" },
         "strictBidRule":   { ".validate": "newData.isBoolean()" },
+        "fastMode":        { ".validate": "newData.isBoolean()" },
+        "specials": {
+          "$specialKey": {
+            ".validate": "newData.isBoolean() && $specialKey.matches(/^(dragon|pixie|bomb|werewolf|shapeshifter|juggler|cloud)$/)"
+          }
+        },
         "players": {
           "$playerId": {
-            "name":  { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 20" },
-            "score": { ".validate": "newData.isNumber() && newData.val() >= -10000 && newData.val() <= 10000" },
-            "isBot": { ".validate": "newData.isBoolean()" }
+            "name":      { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 20" },
+            "score":     { ".validate": "newData.isNumber() && newData.val() >= -10000 && newData.val() <= 10000" },
+            "isBot":     { ".validate": "newData.isBoolean()" },
+            "connected": { ".validate": "newData.isBoolean()" },
+            "lastSeen":  { ".validate": "newData.isNumber() && newData.val() >= 0" }
           }
         },
         "$other": { ".validate": true }

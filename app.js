@@ -7,7 +7,9 @@ import {
   set,
   update,
   get,
-  push
+  push,
+  onDisconnect,
+  serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 import { firebaseConfig } from "./config.js";
 
@@ -24,6 +26,35 @@ const SUITS = [
 ];
 const SUIT_BY_KEY = Object.fromEntries(SUITS.map(s => [s.key, s]));
 const BOT_NAMES = ["Merlin", "Gandalf", "Morgana", "HexerBot", "Rumpel", "Zaubix", "Arcana", "Fawkes", "Nexus", "Eldrin"];
+
+// Bekannte Sonderkarten in fester Reihenfolge (für UI und Deck).
+const SPECIAL_KINDS = [
+  { key: "dragon",       label: "Drache",   emoji: "🐉" },
+  { key: "pixie",        label: "Fee",      emoji: "🧚" },
+  { key: "bomb",         label: "Bombe",    emoji: "💣" },
+  { key: "werewolf",     label: "Werwolf",  emoji: "🐺" },
+  { key: "shapeshifter", label: "Wandler",  emoji: "🌗" },
+  { key: "juggler",      label: "Jongleur", emoji: "🤹" },
+  { key: "cloud",        label: "Wolke",    emoji: "☁️" },
+];
+const SPECIAL_BY_KEY = Object.fromEntries(SPECIAL_KINDS.map(s => [s.key, s]));
+
+// Liefert true, wenn eine Sonderkarte für diesen Raum aktiv ist.
+// Backwards-compat: wenn room.specials fehlt, fällt es auf anniversaryMode zurück.
+function specialEnabled(room, key) {
+  if (!room) return false;
+  if (room.specials && typeof room.specials === "object") {
+    return room.specials[key] === true;
+  }
+  return !!room.anniversaryMode;
+}
+
+// Volles Default-Set (alle aktiv), wenn anniversaryMode an ist – sonst alles aus.
+function defaultSpecialsFor(anniversaryOn) {
+  const out = {};
+  for (const s of SPECIAL_KINDS) out[s.key] = !!anniversaryOn;
+  return out;
+}
 
 const els = {
   joinView: document.getElementById("joinView"),
@@ -70,6 +101,9 @@ const els = {
   toastContainer: document.getElementById("toastContainer"),
   anniversaryCheck: document.getElementById("anniversaryCheck"),
   strictBidCheck: document.getElementById("strictBidCheck"),
+  fastModeCheck: document.getElementById("fastModeCheck"),
+  specialsList: document.getElementById("specialsList"),
+  specialsDetails: document.getElementById("specialsDetails"),
   settingsBtn: document.getElementById("settingsBtn"),
   settingsOverlay: document.getElementById("settingsOverlay"),
   closeSettingsBtn: document.getElementById("closeSettingsBtn"),
@@ -154,14 +188,12 @@ function createDeck() {
     deck.push({ id: uid(), kind: "jester", label: "Narr" });
   }
 
-  if (roomCache && roomCache.anniversaryMode) {
-    deck.push({ id: uid(), kind: "dragon", label: "Drache" });
-    deck.push({ id: uid(), kind: "pixie", label: "Fee" });
-    deck.push({ id: uid(), kind: "bomb", label: "Bombe" });
-    deck.push({ id: uid(), kind: "werewolf", label: "Werwolf" });
-    deck.push({ id: uid(), kind: "shapeshifter", label: "Wandler" });
-    deck.push({ id: uid(), kind: "juggler", label: "Jongleur" });
-    deck.push({ id: uid(), kind: "cloud", label: "Wolke" });
+  if (roomCache) {
+    for (const s of SPECIAL_KINDS) {
+      if (specialEnabled(roomCache, s.key)) {
+        deck.push({ id: uid(), kind: s.key, label: s.label });
+      }
+    }
   }
 
   return shuffle(deck);
@@ -816,11 +848,12 @@ function renderRoom(state) {
 
   order.forEach((id, index) => {
     const p = state.players[id];
-    
+    const offline = isPlayerOffline(p);
+
     const row = document.createElement("div");
-    row.className = "playerRow";
+    row.className = "playerRow" + (offline ? " offline" : "");
     row.innerHTML = `
-      <div class="name">${escapeHtml(p.name)} ${id === currentPlayerId ? '<span class="badge me">Ich</span>' : ''} ${p.isBot ? '<span class="badge bot">Bot</span>' : ''} ${state.hostId === id ? '<span class="badge host">Host</span>' : ''}</div>
+      <div class="name">${escapeHtml(p.name)} ${id === currentPlayerId ? '<span class="badge me">Ich</span>' : ''} ${p.isBot ? '<span class="badge bot">Bot</span>' : ''} ${state.hostId === id ? '<span class="badge host">Host</span>' : ''} ${offline ? '<span class="badge offline" title="Kurz weg – Rejoin möglich">⛅ offline</span>' : ''}</div>
       <div>${Number(p.score || 0)} P</div>
       <div>${currentTurn === id && !state.trickReadyToClear ? (state.phase === "bidding" ? '<span class="badge">Ansage</span>' : '<span class="badge">Zug</span>') : ''}</div>
     `;
@@ -837,15 +870,24 @@ function renderRoom(state) {
   els.addBotBtn.disabled = !(meIsHost && state.phase === "lobby");
   els.fillBotsBtn.disabled = !(meIsHost && state.phase === "lobby");
 
+  // Hauptschalter Jubiläum: angekreuzt wenn mindestens eine Sonderkarte aktiv
+  const anySpecialOn = SPECIAL_KINDS.some(s => specialEnabled(state, s.key));
   if (els.anniversaryCheck) {
-    els.anniversaryCheck.checked = !!state.anniversaryMode;
+    els.anniversaryCheck.checked = anySpecialOn;
     els.anniversaryCheck.disabled = !(meIsHost && state.phase === "lobby");
   }
-  
+
   if (els.strictBidCheck) {
     els.strictBidCheck.checked = state.strictBidRule !== false;
     els.strictBidCheck.disabled = !(meIsHost && state.phase === "lobby");
   }
+
+  if (els.fastModeCheck) {
+    els.fastModeCheck.checked = !!state.fastMode;
+    els.fastModeCheck.disabled = !(meIsHost && state.phase === "lobby");
+  }
+
+  renderSpecialsList(state, meIsHost);
 
   const isMyBiddingTurn = (state.phase === "bidding" && currentTurn === currentPlayerId && meIsInGame && !state.players[currentPlayerId]?.isBot && !state.trickReadyToClear);
   els.bidControls.classList.toggle("hidden", !isMyBiddingTurn);
@@ -918,6 +960,8 @@ function renderRoom(state) {
   els.finishInfo.textContent = state.phase === "finished"
     ? `Gewinner: ${state.winnerId ? playerName(state, state.winnerId) : "—"}`
     : "";
+
+  syncFinishOverlay(state);
     
   if (state.phase === "round_summary") {
     if (!overlayAlreadyShown) {
@@ -932,6 +976,9 @@ function renderRoom(state) {
     overlayAlreadyShown = false;
     hideRoundOverlay();
   }
+
+  // Schnelle Runde: Host startet automatisch die nächste Runde, falls aktiviert.
+  scheduleAutoNextIfNeeded(state);
 
   const isSummary = state.phase === "round_summary";
   const isFinished = state.phase === "finished";
@@ -1079,6 +1126,146 @@ function maybeAutoPassBots(state) {
       return room;
     });
   }, 700 + Math.random() * 400);
+}
+
+// ============================================================
+// FINAL WINNER SCREEN
+// ============================================================
+let __finishOverlayShownFor = null;
+function syncFinishOverlay(state) {
+  const ov = document.getElementById("finishOverlay");
+  if (!ov) return;
+  if (state?.phase !== "finished") {
+    ov.classList.add("hidden");
+    __finishOverlayShownFor = null;
+    return;
+  }
+  // Stabilen Key bilden, damit Overlay nur einmal pro Spielende neu gefüllt wird.
+  const key = `${currentRoomCode}:${state.winnerId || "?"}:${state.createdAt || 0}:${state.maxRound || 0}`;
+  if (__finishOverlayShownFor === key) return;
+  __finishOverlayShownFor = key;
+
+  const order = playerIds(state);
+  const ranked = order
+    .map(id => ({
+      id,
+      name: state.players[id]?.name || "—",
+      score: Number(state.players[id]?.score || 0),
+      isBot: !!state.players[id]?.isBot
+    }))
+    .sort((a, b) => b.score - a.score);
+
+  const winner = ranked[0];
+  const winnerName = document.getElementById("finishWinnerName");
+  const winnerScore = document.getElementById("finishWinnerScore");
+  if (winnerName) winnerName.textContent = winner ? `🏆 ${winner.name}` : "—";
+  if (winnerScore) winnerScore.textContent = winner ? `${winner.score} Punkte` : "—";
+
+  // Podium: bis zu 3 Plätze, in Reihenfolge 2-1-3 für ein klassisches Podium-Gefühl.
+  const podiumEl = document.getElementById("finishPodium");
+  if (podiumEl) {
+    podiumEl.innerHTML = "";
+    const slots = [
+      { rank: 2, cls: "second", emoji: "🥈" },
+      { rank: 1, cls: "first",  emoji: "🥇" },
+      { rank: 3, cls: "third",  emoji: "🥉" },
+    ];
+    for (const slot of slots) {
+      const p = ranked[slot.rank - 1];
+      const div = document.createElement("div");
+      div.className = `podiumSlot ${slot.cls}`;
+      div.innerHTML = p
+        ? `<div class="podiumRank">${slot.emoji}</div>
+           <div class="podiumName">${escapeHtml(p.name)}${p.isBot ? " 🤖" : ""}</div>
+           <div class="podiumScore">${p.score} P</div>`
+        : `<div class="podiumRank" style="opacity:.4">${slot.emoji}</div>
+           <div class="podiumName" style="opacity:.4">—</div>
+           <div class="podiumScore" style="opacity:.4">—</div>`;
+      podiumEl.appendChild(div);
+    }
+  }
+
+  // Komplette Rangliste
+  const listEl = document.getElementById("finishList");
+  if (listEl) {
+    listEl.innerHTML = "";
+    ranked.forEach((p, idx) => {
+      const row = document.createElement("div");
+      row.className = "row";
+      row.innerHTML = `
+        <span>#${idx + 1}</span>
+        <span><strong>${escapeHtml(p.name)}</strong>${p.isBot ? " <span class='badge bot'>Bot</span>" : ""}${p.id === currentPlayerId ? " <span class='badge me'>Ich</span>" : ""}</span>
+        <span>${p.score} P</span>
+      `;
+      listEl.appendChild(row);
+    });
+  }
+
+  ov.classList.remove("hidden");
+}
+
+function buildFinishResultText(state) {
+  const order = playerIds(state);
+  const ranked = order
+    .map(id => ({
+      name: state.players[id]?.name || "—",
+      score: Number(state.players[id]?.score || 0)
+    }))
+    .sort((a, b) => b.score - a.score);
+  const lines = ranked.map((p, i) => `${i + 1}. ${p.name} – ${p.score} P`);
+  return `🪄 Wizard Online – Ergebnis\n${lines.join("\n")}\n${shareUrl()}`;
+}
+
+// Schnelle Runde / Auto-Weiter
+let __autoNextTimer = null;
+function scheduleAutoNextIfNeeded(state) {
+  if (!state) return;
+  // Auto-Weiter gilt nur für round_summary, nicht für finished (dort soll der Gewinner-Screen bleiben).
+  if (state.phase !== "round_summary" || !state.fastMode || state.hostId !== currentPlayerId) {
+    if (__autoNextTimer) { clearTimeout(__autoNextTimer); __autoNextTimer = null; }
+    return;
+  }
+  if (__autoNextTimer) return; // schon geplant
+  __autoNextTimer = setTimeout(async () => {
+    __autoNextTimer = null;
+    if (!roomCache) return;
+    if (roomCache.phase !== "round_summary") return;
+    if (!roomCache.fastMode) return;
+    if (roomCache.hostId !== currentPlayerId) return;
+    try { await nextRound(); } catch (e) { console.error("Auto-Weiter fehlgeschlagen:", e); }
+  }, 2400);
+}
+
+function renderSpecialsList(state, meIsHost) {
+  if (!els.specialsList) return;
+  els.specialsList.innerHTML = "";
+  for (const s of SPECIAL_KINDS) {
+    const on = specialEnabled(state, s.key);
+    const id = `specialCheck_${s.key}`;
+    const wrap = document.createElement("label");
+    wrap.innerHTML = `
+      <span><span style="font-size:1.05rem;">${s.emoji}</span> ${escapeHtml(s.label)}</span>
+      <input type="checkbox" id="${id}" ${on ? "checked" : ""} ${(meIsHost && state.phase === "lobby") ? "" : "disabled"}>
+    `;
+    els.specialsList.appendChild(wrap);
+    const cb = wrap.querySelector("input");
+    cb.addEventListener("change", () => updateSpecialFlag(s.key, cb.checked));
+  }
+}
+
+async function updateSpecialFlag(key, value) {
+  if (!roomCache || roomCache.hostId !== currentPlayerId || roomCache.phase !== "lobby") return;
+  await runTransaction(roomRef(currentRoomCode), room => {
+    if (!room || room.phase !== "lobby") return room;
+    // Backwards-compat: bei erstem Toggle vollständiges Specials-Objekt aus altem Zustand ableiten
+    if (!room.specials || typeof room.specials !== "object") {
+      room.specials = defaultSpecialsFor(!!room.anniversaryMode);
+    }
+    room.specials[key] = !!value;
+    // anniversaryMode bleibt als „mindestens eines aktiv"-Spiegel
+    room.anniversaryMode = SPECIAL_KINDS.some(s => room.specials[s.key]);
+    return room;
+  });
 }
 
 function renderBids(state) {
@@ -1541,7 +1728,9 @@ function roomStateOrDefault(roomCode, playerName, playerId) {
     hands: {},
     scoreHistory: [],
     anniversaryMode: false,
-    strictBidRule: true, 
+    specials: defaultSpecialsFor(false),
+    fastMode: false,
+    strictBidRule: true,
     players: {
       [playerId]: {
         id: playerId,
@@ -1609,12 +1798,18 @@ async function joinOrCreateRoom(isCreate = false) {
           score: 0,
           isBot: false,
           seat: count,
-          connected: true
+          connected: true,
+          lastSeen: Date.now()
         };
         room.order.push(currentPlayerId);
       } else {
         room.players[currentPlayerId].name = name;
         room.players[currentPlayerId].connected = true;
+        room.players[currentPlayerId].lastSeen = Date.now();
+        // Falls jemand "kurz weg" war, freundlich anzeigen
+        if (room.phase !== "lobby") {
+          room.message = `${name} ist wieder da.`;
+        }
       }
       if (!room.hostId) room.hostId = room.order[0];
       return room;
@@ -1627,6 +1822,7 @@ async function joinOrCreateRoom(isCreate = false) {
     }
     room.players[currentPlayerId].name = name;
     room.players[currentPlayerId].connected = true;
+    room.players[currentPlayerId].lastSeen = Date.now();
     return room;
   });
 
@@ -1648,6 +1844,59 @@ function listenToRoom(roomCode) {
     roomCache = state;
     renderRoom(state);
   });
+  setupPresence(roomCode);
+}
+
+// ============================================================
+// PRESENCE / REJOIN
+// ============================================================
+let __presenceRoom = null;
+let __heartbeatTimer = null;
+
+function setupPresence(roomCode) {
+  __presenceRoom = roomCode;
+  const connRef = ref(db, `rooms/${roomCode}/players/${currentPlayerId}/connected`);
+  const seenRef = ref(db, `rooms/${roomCode}/players/${currentPlayerId}/lastSeen`);
+
+  // Beim Verbindungsverlust automatisch als offline markieren.
+  try {
+    onDisconnect(connRef).set(false).catch(() => {});
+    onDisconnect(seenRef).set(serverTimestamp()).catch(() => {});
+  } catch (e) {
+    console.warn("onDisconnect nicht verfügbar:", e?.message);
+  }
+
+  // Direkt jetzt als online markieren – falls Eintrag existiert.
+  update(ref(db, `rooms/${roomCode}/players/${currentPlayerId}`), {
+    connected: true,
+    lastSeen: serverTimestamp()
+  }).catch(() => {});
+
+  // Heartbeat alle 15 Sekunden.
+  if (__heartbeatTimer) clearInterval(__heartbeatTimer);
+  __heartbeatTimer = setInterval(() => {
+    if (__presenceRoom !== roomCode) return;
+    update(ref(db, `rooms/${roomCode}/players/${currentPlayerId}`), {
+      lastSeen: serverTimestamp(),
+      connected: true
+    }).catch(() => {});
+  }, 15000);
+}
+
+function teardownPresence() {
+  if (__heartbeatTimer) { clearInterval(__heartbeatTimer); __heartbeatTimer = null; }
+  __presenceRoom = null;
+}
+
+// Heuristik: ein Spieler gilt als offline, wenn `connected === false`
+// ODER `lastSeen` älter als 45 s ist (Heartbeat-Aussetzer).
+function isPlayerOffline(player) {
+  if (!player) return false;
+  if (player.isBot) return false;
+  if (player.connected === false) return true;
+  const seen = typeof player.lastSeen === "number" ? player.lastSeen : 0;
+  if (seen && Date.now() - seen > 45000) return true;
+  return false;
 }
 
 async function leaveRoom() {
@@ -1657,7 +1906,8 @@ async function leaveRoom() {
   if (!leaveConfirm) return;
 
   const roomReference = roomRef(currentRoomCode);
-  
+
+  teardownPresence();
   if (roomUnsub) {
     roomUnsub();
     roomUnsub = null;
@@ -2348,8 +2598,19 @@ els.closeStatsBtn?.addEventListener("click", () => {
 
 els.anniversaryCheck?.addEventListener("change", async () => {
   if (!roomCache || roomCache.hostId !== currentPlayerId) return;
+  const on = els.anniversaryCheck.checked;
+  await runTransaction(roomRef(currentRoomCode), room => {
+    if (!room || room.phase !== "lobby") return room;
+    room.anniversaryMode = on;
+    room.specials = defaultSpecialsFor(on);
+    return room;
+  });
+});
+
+els.fastModeCheck?.addEventListener("change", async () => {
+  if (!roomCache || roomCache.hostId !== currentPlayerId) return;
   await update(ref(db, `rooms/${currentRoomCode}`), {
-    anniversaryMode: els.anniversaryCheck.checked
+    fastMode: !!els.fastModeCheck.checked
   });
 });
 
@@ -2363,21 +2624,111 @@ els.strictBidCheck?.addEventListener("change", async () => {
 document.querySelectorAll(".suitChoice").forEach(btn => {
   btn.addEventListener("click", () => chooseTrumpSuit(btn.dataset.suit));
 });
-els.copyRoomBtn.addEventListener("click", async () => {
-  if (!currentRoomCode) return;
-  await navigator.clipboard.writeText(currentRoomCode);
-  els.copyRoomBtn.textContent = "Kopiert!";
-  setTimeout(() => (els.copyRoomBtn.textContent = "Code kopieren"), 1000);
-});
-els.shareBtn.addEventListener("click", async () => {
+function shareUrl() {
   const url = new URL(window.location.href);
   if (currentRoomCode) url.searchParams.set("room", currentRoomCode);
-  const text = `Wizard Raum: ${currentRoomCode || ""} ${url.toString()}`;
-  if (navigator.share) {
-    try { await navigator.share({ title: "Wizard Online", text, url: url.toString() }); } catch {}
+  return url.toString();
+}
+function shareMessage() {
+  const u = shareUrl();
+  return currentRoomCode
+    ? `🪄 Spiel mit mir Wizard! Raumcode: ${currentRoomCode}\n${u}`
+    : `🪄 Wizard Online: ${u}`;
+}
+
+async function copyWithFeedback(text, btn, doneLabel = "Kopiert!") {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // Fallback: prompt
+    try { window.prompt("Kopieren:", text); } catch {}
+  }
+  if (btn) {
+    const original = btn.textContent;
+    btn.textContent = doneLabel;
+    btn.disabled = true;
+    setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 1200);
+  }
+  showToast(doneLabel);
+}
+
+els.copyRoomBtn.addEventListener("click", () => {
+  if (!currentRoomCode) return;
+  copyWithFeedback(currentRoomCode, els.copyRoomBtn, "Code kopiert!");
+});
+
+function openShareOverlay() {
+  const ov = document.getElementById("shareOverlay");
+  const codeBox = document.getElementById("shareCodeBig");
+  if (codeBox) codeBox.textContent = currentRoomCode || "—";
+  const qrBox = document.getElementById("shareQrBox");
+  const qrToggle = document.getElementById("shareQrToggleBtn");
+  if (qrBox) qrBox.style.display = "none";
+  if (qrToggle) qrToggle.textContent = "QR-Code anzeigen";
+  if (ov) ov.classList.remove("hidden");
+}
+
+els.shareBtn.addEventListener("click", openShareOverlay);
+
+document.getElementById("finishCopyBtn")?.addEventListener("click", (e) => {
+  if (!roomCache) return;
+  copyWithFeedback(buildFinishResultText(roomCache), e.currentTarget, "Ergebnis kopiert!");
+});
+
+document.getElementById("finishNewGameBtn")?.addEventListener("click", async () => {
+  if (!roomCache) return;
+  const ov = document.getElementById("finishOverlay");
+  if (roomCache.hostId === currentPlayerId) {
+    try { await nextRound(); } catch {}
+    ov?.classList.add("hidden");
   } else {
-    await navigator.clipboard.writeText(url.toString());
-    alert("Link kopiert.");
+    showToast("Nur der Host kann eine neue Partie starten.");
+  }
+});
+
+document.getElementById("closeShareBtn")?.addEventListener("click", () => {
+  document.getElementById("shareOverlay")?.classList.add("hidden");
+});
+
+document.getElementById("shareWhatsAppBtn")?.addEventListener("click", () => {
+  const wa = `https://wa.me/?text=${encodeURIComponent(shareMessage())}`;
+  window.open(wa, "_blank", "noopener");
+});
+
+document.getElementById("shareWebBtn")?.addEventListener("click", async () => {
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: "Wizard Online", text: shareMessage(), url: shareUrl() });
+    } catch {}
+  } else {
+    copyWithFeedback(shareMessage(), document.getElementById("shareWebBtn"), "Text kopiert!");
+  }
+});
+
+document.getElementById("shareCopyLinkBtn")?.addEventListener("click", (e) => {
+  copyWithFeedback(shareUrl(), e.currentTarget, "Link kopiert!");
+});
+
+document.getElementById("shareCopyCodeBtn")?.addEventListener("click", (e) => {
+  if (!currentRoomCode) return;
+  copyWithFeedback(currentRoomCode, e.currentTarget, "Code kopiert!");
+});
+
+document.getElementById("shareQrToggleBtn")?.addEventListener("click", () => {
+  const qrBox = document.getElementById("shareQrBox");
+  const qrImg = document.getElementById("shareQrImg");
+  const btn = document.getElementById("shareQrToggleBtn");
+  if (!qrBox || !qrImg || !btn) return;
+  if (qrBox.style.display === "none") {
+    const data = encodeURIComponent(shareUrl());
+    // QR-Server (kostenloser öffentlicher Generator, kein Tracking via GET-Parameter)
+    qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${data}`;
+    qrBox.style.display = "flex";
+    btn.textContent = "QR-Code ausblenden";
+  } else {
+    qrBox.style.display = "none";
+    qrImg.removeAttribute("src");
+    btn.textContent = "QR-Code anzeigen";
   }
 });
 

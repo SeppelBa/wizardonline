@@ -61,6 +61,8 @@
           <span>Global</span>
         </div>
 
+        <p class="leaderboardHint">Namen antippen für Details</p>
+
         <div id="leaderboardList" class="leaderboardList">
           <div class="leaderboardItem skeleton"></div>
           <div class="leaderboardItem skeleton"></div>
@@ -387,23 +389,76 @@
 
   </div>
 
+  <div id="shareOverlay" class="roundOverlay hidden">
+    <div class="roundOverlayCard shareMenuCard">
+      <div class="overlayGlow" style="background: #22d3ee;"></div>
+      <h2 style="margin-bottom: 4px;">📣 Raum teilen</h2>
+      <p class="hint" style="margin-bottom: 6px;">Schicke den Code oder Link an deine Freunde.</p>
+
+      <div id="shareCodeBig" class="shareCodeBig">—</div>
+
+      <div class="shareButtons">
+        <button id="shareWhatsAppBtn" class="secondary">WhatsApp</button>
+        <button id="shareWebBtn" class="secondary">Teilen…</button>
+        <button id="shareCopyLinkBtn">Link kopieren</button>
+        <button id="shareCopyCodeBtn" class="secondary">Code kopieren</button>
+      </div>
+
+      <div id="shareQrBox" class="qrBox" style="display:none;">
+        <img id="shareQrImg" alt="QR-Code" />
+      </div>
+      <button id="shareQrToggleBtn" class="ghost" style="margin-top: 12px; width: 100%;">QR-Code anzeigen</button>
+      <button id="closeShareBtn" class="ghost" style="margin-top: 10px; width: 100%;">Schließen</button>
+    </div>
+  </div>
+
+  <div id="finishOverlay" class="roundOverlay hidden">
+    <div class="roundOverlayCard finishCard">
+      <div class="overlayGlow" style="background: #facc15;"></div>
+      <h2 style="margin-bottom: 4px;">🏆 Spiel beendet</h2>
+      <div class="finishWinner">
+        <div class="winnerName" id="finishWinnerName">—</div>
+        <div class="winnerScore" id="finishWinnerScore">—</div>
+      </div>
+      <div id="finishPodium" class="podium"></div>
+      <div id="finishList" class="finishList"></div>
+      <div class="finishActions">
+        <button id="finishCopyBtn" class="secondary">Ergebnis kopieren</button>
+        <button id="finishNewGameBtn">Neue Partie</button>
+      </div>
+    </div>
+  </div>
+
   <div id="settingsOverlay" class="roundOverlay hidden">
-    <div class="roundOverlayCard" style="max-width: 320px;">
+    <div class="roundOverlayCard settingsCard">
       <div class="overlayGlow"></div>
-      <h2 style="margin-bottom: 20px;">⚙️ Einstellungen</h2>
-      
-      <div style="display: flex; align-items: center; justify-content: space-between; width: 100%; margin: 15px 0; background: rgba(255,255,255,0.03); padding: 12px; border-radius: 8px;">
-        <span style="font-size: 0.95rem; font-weight: 500; color: #fff;">Jubiläums-Sonderkarten</span>
+      <h2 style="margin-bottom: 16px;">⚙️ Einstellungen</h2>
+
+      <div class="settingsRow">
+        <span>Jubiläums-Sonderkarten</span>
         <label class="switch">
           <input type="checkbox" id="anniversaryCheck">
           <span class="slider"></span>
         </label>
       </div>
 
-      <div style="display: flex; align-items: center; justify-content: space-between; width: 100%; margin: 15px 0; background: rgba(255,255,255,0.03); padding: 12px; border-radius: 8px;">
-        <span style="font-size: 0.95rem; font-weight: 500; color: #fff;">±1 Regel (Stichzwang)</span>
+      <details id="specialsDetails" class="specialsDetails">
+        <summary>Einzelne Sonderkarten</summary>
+        <div id="specialsList" class="specialsList"></div>
+      </details>
+
+      <div class="settingsRow">
+        <span>±1 Regel (Stichzwang)</span>
         <label class="switch">
           <input type="checkbox" id="strictBidCheck" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="settingsRow">
+        <span>Schnelle Runde (Auto-Weiter)</span>
+        <label class="switch">
+          <input type="checkbox" id="fastModeCheck">
           <span class="slider"></span>
         </label>
       </div>
