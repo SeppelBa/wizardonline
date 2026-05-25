@@ -155,6 +155,19 @@ button.danger{
     );
 }
 
+/* Host-Löschbutton in der Topbar bleibt klein/handytauglich. */
+#deleteRoomBtn{
+  padding:10px 12px;
+  font-size:.85rem;
+  white-space:nowrap;
+}
+@media (max-width: 600px){
+  #deleteRoomBtn{
+    padding:8px 10px;
+    font-size:.78rem;
+  }
+}
+
 button.ghost{
   background:rgba(255,255,255,.06);
 }

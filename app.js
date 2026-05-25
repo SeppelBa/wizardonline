@@ -22,6 +22,24 @@ const MIN_PLAYERS = 2;
 const LEAVE_GRACE_MS = 2 * 60 * 1000; // 2 Minuten
 // Wie alt darf ein Raum maximal sein, damit er in der „Aktive Räume"-Liste auftaucht.
 const ACTIVE_ROOM_MAX_AGE_MS = 6 * 60 * 60 * 1000; // 6 h
+
+// ============================================================
+// Auto-Cleanup (opportunistisch, clientseitig, kein Server).
+// Räume werden ohne Cloud Function aufgeräumt: jeder verbundene Client
+// löscht stale/leere/beendete Räume, wenn die Regeln dafür erfüllt sind.
+// ============================================================
+// Stale: keine Aktivität seit 24h -> löschen (nicht während Pause).
+const ROOM_STALE_MS = 24 * 60 * 60 * 1000;
+// Schonfrist nach Spielende, damit der Gewinner-Screen kurz sichtbar bleibt.
+// Nach Ablauf werden beendete Räume gelöscht (außer pausiert).
+const FINISHED_ROOM_GRACE_MS = 30 * 60 * 1000; // 30 Minuten
+// Leerer Raum (Lobby ohne Spieler): nach kurzer Schonfrist löschen, damit
+// kurze Reconnect-Lücken nicht versehentlich den Raum killen.
+const EMPTY_LOBBY_GRACE_MS = 60 * 1000; // 60 Sekunden
+// Damit nicht jeder Snapshot dieselben Räume gleichzeitig zu löschen versucht,
+// merken wir uns lokale Lösch-Versuche kurz, um Spam zu vermeiden.
+const CLEANUP_ATTEMPT_COOLDOWN_MS = 60 * 1000;
+const __cleanupAttempts = new Map(); // code -> lastAttempt timestamp
 const SUITS = [
   { key: "hearts", label: "Herz", short: "♥", css: "red" },
   { key: "spades", label: "Pik", short: "♠", css: "black" },
@@ -93,6 +111,7 @@ const els = {
   shareBtn: document.getElementById("shareBtn"),
   copyRoomBtn: document.getElementById("copyRoomBtn"),
   leaveBtn: document.getElementById("leaveBtn"),
+  deleteRoomBtn: document.getElementById("deleteRoomBtn"),
   roomLabel: document.getElementById("roomLabel"),
   phaseLabel: document.getElementById("phaseLabel"),
   roundLabel: document.getElementById("roundLabel"),
@@ -839,6 +858,9 @@ function showJoinView(show) {
   els.gameView.classList.toggle("hidden", show);
   els.leaveBtn.classList.toggle("hidden", show);
   els.settingsBtn?.classList.toggle("hidden", show);
+  // Beim Wechsel zurück auf die Join-Ansicht den Host-Löschbutton ausblenden;
+  // renderRoom() blendet ihn beim nächsten Snapshot wieder ein, falls Host.
+  if (show) els.deleteRoomBtn?.classList.add("hidden");
   if (show) {
     fetchGlobalLeaderboard();
     subscribeActiveRooms();
@@ -858,8 +880,13 @@ function subscribeActiveRooms() {
   // garantiert sichtbar ist – auch falls der erste Snapshot lange dauert.
   try { renderActiveRooms({}); } catch (e) {}
   __activeRoomsUnsub = onValue(roomsRef, snap => {
+    const data = snap.val() || {};
+    // Opportunistisches Cleanup: stale/empty/finished Räume entfernen,
+    // unabhängig davon, ob die Join-Ansicht gerade sichtbar ist (mit
+    // Cooldown pro Raumcode, damit nicht jeder Client gleichzeitig schreibt).
+    try { sweepRoomsForCleanup(data); } catch (e) { console.warn("sweep failed", e); }
     if (els.joinView.classList.contains("hidden")) return;
-    renderActiveRooms(snap.val() || {});
+    renderActiveRooms(data);
   }, (err) => {
     // Wenn die RTDB-Regeln globales Lesen unter /rooms nicht erlauben,
     // landen wir hier (PERMISSION_DENIED). In diesem Fall zeigen wir der
@@ -897,6 +924,127 @@ function phaseLabelShort(phase) {
   }
 }
 
+// ============================================================
+// Cleanup-Helfer (opportunistisch).
+// Entscheidet je Raum, ob er vom Client gelöscht werden soll. Wir bevorzugen
+// die strengste Bedingung, die aus Nutzersicht sinnvoll ist:
+//   - pausierte Räume nie löschen,
+//   - leere Lobbys nach kurzer Schonfrist löschen,
+//   - beendete Räume nach FINISHED_ROOM_GRACE_MS löschen,
+//   - alles, was seit ROOM_STALE_MS keine Aktivität mehr hatte, löschen.
+// Läuft das mid-game (Phase nicht lobby/finished) und gibt es noch online-
+// reservierte Spieler oder eine aktive Rejoin-Frist, wird NICHT gelöscht.
+function roomFreshness(room) {
+  if (!room || typeof room !== "object") return 0;
+  const ts = [
+    typeof room.updatedAt === "number" ? room.updatedAt : 0,
+    typeof room.listedAt === "number" ? room.listedAt : 0,
+    typeof room.createdAt === "number" ? room.createdAt : 0
+  ];
+  return Math.max.apply(null, ts);
+}
+
+function roomHasFreshRejoinReservation(room, now) {
+  const players = room && room.players;
+  if (!players || typeof players !== "object") return false;
+  for (const id of Object.keys(players)) {
+    const p = players[id] || {};
+    // Bots zählen nicht als echte Reservierung.
+    if (p.isBot) continue;
+    // Online-Spieler -> Raum lebt.
+    if (p.connected === true) return true;
+    // Frische leaveDeadline (noch nicht abgelaufen) -> Platz reserviert.
+    if (typeof p.leaveDeadline === "number" && p.leaveDeadline > now) return true;
+  }
+  return false;
+}
+
+// Liefert einen Grund-String, wenn der Raum gelöscht werden soll, sonst null.
+function reasonToDeleteRoom(room, code, now) {
+  if (!room || typeof room !== "object") return null;
+  if (!/^[A-Z0-9]{4,8}$/.test(String(code || ""))) return null;
+  // Pausierte Räume sind heilig.
+  if (room.paused === true) return null;
+
+  const fresh = roomFreshness(room);
+  const age = fresh ? (now - fresh) : Infinity;
+  const players = (room.players && typeof room.players === "object") ? room.players : {};
+  const playerIds = Object.keys(players);
+  const humanIds = playerIds.filter(id => !(players[id] && players[id].isBot));
+  const phase = room.phase || "lobby";
+
+  // Leerer Raum (keine echten Spieler).
+  if (humanIds.length === 0) {
+    // Lobby/finished sofort nach kurzer Schonfrist löschen.
+    if (phase === "lobby" || phase === "finished") {
+      if (age > EMPTY_LOBBY_GRACE_MS) return "empty-lobby";
+    } else {
+      // Mid-game leer: erst nach LEAVE_GRACE_MS + Puffer entfernen, um
+      // ehrliche Rejoins nicht abzuwürgen. Wenn updatedAt sehr alt -> löschen.
+      if (age > Math.max(LEAVE_GRACE_MS, EMPTY_LOBBY_GRACE_MS) * 2) return "empty-mid-game";
+    }
+  }
+
+  // Beendete Räume nach Schonfrist löschen.
+  if (phase === "finished" && age > FINISHED_ROOM_GRACE_MS) return "finished-grace";
+
+  // Stale: 24h keine Aktivität.
+  if (age > ROOM_STALE_MS) {
+    // Im laufenden Spiel zusätzlich prüfen, dass keine frische Rejoin-
+    // Reservierung mehr offen ist; sonst lieber stehen lassen.
+    if (phase !== "lobby" && phase !== "finished") {
+      if (roomHasFreshRejoinReservation(room, now)) return null;
+    }
+    return "stale-24h";
+  }
+
+  return null;
+}
+
+// Soll der Raum in der „Aktive Räume"-Liste ausgeblendet werden?
+// Wir blenden alles aus, was wir löschen würden, plus klassische Filter
+// (finished, zu alt). Damit nervt es nicht, wenn das Löschen wegen
+// Permissions/Netz nicht sofort klappt.
+function shouldHideRoomInList(room, code, now) {
+  if (!room || typeof room !== "object") return true;
+  if (room.phase === "finished") return true;
+  const fresh = roomFreshness(room);
+  if (fresh && (now - fresh) > ACTIVE_ROOM_MAX_AGE_MS) return true;
+  if (reasonToDeleteRoom(room, code, now)) return true;
+  return false;
+}
+
+async function tryDeleteRoomIfStale(code, room) {
+  const now = Date.now();
+  const reason = reasonToDeleteRoom(room, code, now);
+  if (!reason) return false;
+  const last = __cleanupAttempts.get(code) || 0;
+  if (now - last < CLEANUP_ATTEMPT_COOLDOWN_MS) return false;
+  __cleanupAttempts.set(code, now);
+  try {
+    await set(roomRef(code), null);
+    console.info("[cleanup] Raum gelöscht:", code, "Grund:", reason);
+    return true;
+  } catch (e) {
+    // PERMISSION_DENIED bei strengen Regeln -> kein Drama, einfach loggen.
+    console.warn("[cleanup] Löschen fehlgeschlagen für", code, e?.code || e?.message || e);
+    return false;
+  }
+}
+
+// Läuft über alle bekannten Räume und versucht zu löschen, was offensichtlich
+// stale/leer/beendet ist. Wird opportunistisch beim Empfang der Raumliste
+// aufgerufen (also auf der Join-Seite) und beim eigenen Raum.
+function sweepRoomsForCleanup(roomsObj) {
+  if (!roomsObj || typeof roomsObj !== "object") return;
+  for (const code of Object.keys(roomsObj)) {
+    const room = roomsObj[code];
+    // Für den eigenen Raum entscheidet die Spielmechanik bzw. der Host-Button.
+    if (code === currentRoomCode) continue;
+    tryDeleteRoomIfStale(code, room);
+  }
+}
+
 function renderActiveRooms(roomsObj) {
   const box = els.activeRoomsBox;
   const list = els.activeRoomsList;
@@ -929,6 +1077,10 @@ function renderActiveRooms(roomsObj) {
       if (ts && now - ts > ACTIVE_ROOM_MAX_AGE_MS) continue;
       // Endgültig beendete Räume sollen nicht in der Liste auftauchen.
       if (room.phase === "finished") continue;
+      // Räume, die laut Cleanup-Regeln ohnehin verschwinden sollen (stale,
+      // leer ohne Pause etc.), nicht mehr anzeigen – auch wenn das eigentliche
+      // Löschen wegen Permissions/Netz noch nicht durchgegangen ist.
+      if (shouldHideRoomInList(room, code, now)) continue;
       rows.push({
         code,
         phase: room.phase || "lobby",
@@ -1100,6 +1252,12 @@ function renderRoom(state) {
   const meIsHost = state.hostId === currentPlayerId;
   const meIsInGame = !!state.players?.[currentPlayerId];
   const currentTurn = currentTurnPlayerId(state);
+
+  // Host-Löschbutton sichtbar machen, sobald wir im Raum sind und Host sind.
+  // Außerhalb des Raums (Join-View) bleibt er versteckt.
+  if (els.deleteRoomBtn) {
+    els.deleteRoomBtn.classList.toggle("hidden", !meIsHost);
+  }
 
   order.forEach((id, index) => {
     const p = state.players[id];
@@ -2332,6 +2490,42 @@ function stopCountdownTick() {
   if (__countdownTickTimer) { clearInterval(__countdownTickTimer); __countdownTickTimer = null; }
 }
 
+// ============================================================
+// Host-Löschbutton: löscht den aktuellen Raum komplett (nur Host).
+// ============================================================
+async function deleteRoomAsHost() {
+  if (!currentRoomCode) return;
+  if (!roomCache || roomCache.hostId !== currentPlayerId) {
+    showToast("Nur der Host kann den Raum löschen.");
+    return;
+  }
+  const ok = await askConfirm({
+    title: "Raum löschen?",
+    message: "Möchtest du diesen Raum wirklich löschen? Alle Spieler verlieren den Zugriff.",
+    okText: "Raum löschen",
+    cancelText: "Abbrechen"
+  });
+  if (!ok) return;
+
+  const code = currentRoomCode;
+  teardownPresence();
+  if (roomUnsub) { roomUnsub(); roomUnsub = null; }
+
+  try {
+    await set(roomRef(code), null);
+    showToast("Raum gelöscht.");
+  } catch (e) {
+    alert(describeFirebaseError(e, "deleteRoomAsHost (set null auf rooms/" + code + ")"));
+    // Bei Fehler State trotzdem zurücksetzen, sonst hängt der Host fest.
+  }
+
+  currentRoomCode = "";
+  roomCache = null;
+  localStorage.removeItem(LOCAL.roomCode);
+  if (els.roomInput) els.roomInput.value = "";
+  showJoinView(true);
+}
+
 async function leaveRoom() {
   if (!currentRoomCode) return;
 
@@ -3153,6 +3347,7 @@ els.addBotBtn.addEventListener("click", () => addBot(1));
 els.fillBotsBtn.addEventListener("click", fillBotsTo3);
 els.bidBtn.addEventListener("click", sendBid);
 els.leaveBtn.addEventListener("click", leaveRoom);
+els.deleteRoomBtn?.addEventListener("click", deleteRoomAsHost);
 els.nextRoundBtn.addEventListener("click", nextRound);
 els.closeOverlayBtn?.addEventListener("click", hideRoundOverlay);
 
