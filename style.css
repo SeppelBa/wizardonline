@@ -159,19 +159,6 @@ button.danger{
     );
 }
 
-/* Host-Löschbutton in der Topbar bleibt klein/handytauglich. */
-#deleteRoomBtn{
-  padding:10px 12px;
-  font-size:.85rem;
-  white-space:nowrap;
-}
-@media (max-width: 600px){
-  #deleteRoomBtn{
-    padding:8px 10px;
-    font-size:.78rem;
-  }
-}
-
 button.ghost{
   background:rgba(255,255,255,.06);
 }
@@ -1352,40 +1339,24 @@ button:disabled{
     font-size: 0.55rem;
   }
 
-  /* Mobile: Topbar stapeln, damit Aktions-Buttons volle Breite bekommen. */
-  .topbar{
-    flex-direction:column;
-    align-items:stretch;
-    gap:12px;
-  }
-
-  /* Mobile: 2x2-Raster für die Raumaktions-Buttons. */
+  /* Mobile: Top-Aktions-Buttons bleiben kompakt einzeilig, kein Overflow. */
   .top-actions{
-    display:grid;
-    grid-template-columns:repeat(2,minmax(0,1fr));
-    gap:8px;
-    width:100%;
+    gap:4px;
+    flex-wrap:wrap;
+    justify-content:flex-end;
   }
 
   .top-actions > button{
-    width:100%;
-    min-width:0;
-    padding:10px 8px;
-    font-size:.85rem;
+    padding:8px 10px;
+    font-size:.78rem;
     white-space:nowrap;
-    overflow:hidden;
-    text-overflow:ellipsis;
   }
 
-  /* Settings-Icon belegt eine eigene volle Zeile, rechtsbündig. */
   .top-actions > #settingsBtn{
-    grid-column:1 / -1;
-    justify-self:end;
-    width:auto;
-    padding:6px 10px;
+    padding:6px 8px;
+    font-size:1rem;
   }
 
-  /* Versteckte Buttons sollen keine Grid-Zelle belegen. */
   .top-actions > button.hidden{
     display:none;
   }

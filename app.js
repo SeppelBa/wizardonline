@@ -111,7 +111,6 @@ const els = {
   shareBtn: document.getElementById("shareBtn"),
   copyRoomBtn: document.getElementById("copyRoomBtn"),
   leaveBtn: document.getElementById("leaveBtn"),
-  deleteRoomBtn: document.getElementById("deleteRoomBtn"),
   roomLabel: document.getElementById("roomLabel"),
   phaseLabel: document.getElementById("phaseLabel"),
   roundLabel: document.getElementById("roundLabel"),
@@ -858,9 +857,6 @@ function showJoinView(show) {
   els.gameView.classList.toggle("hidden", show);
   els.leaveBtn.classList.toggle("hidden", show);
   els.settingsBtn?.classList.toggle("hidden", show);
-  // Beim Wechsel zurück auf die Join-Ansicht den Host-Löschbutton ausblenden;
-  // renderRoom() blendet ihn beim nächsten Snapshot wieder ein, falls Host.
-  if (show) els.deleteRoomBtn?.classList.add("hidden");
   if (show) {
     fetchGlobalLeaderboard();
     subscribeActiveRooms();
@@ -1252,12 +1248,6 @@ function renderRoom(state) {
   const meIsHost = state.hostId === currentPlayerId;
   const meIsInGame = !!state.players?.[currentPlayerId];
   const currentTurn = currentTurnPlayerId(state);
-
-  // Host-Löschbutton sichtbar machen, sobald wir im Raum sind und Host sind.
-  // Außerhalb des Raums (Join-View) bleibt er versteckt.
-  if (els.deleteRoomBtn) {
-    els.deleteRoomBtn.classList.toggle("hidden", !meIsHost);
-  }
 
   order.forEach((id, index) => {
     const p = state.players[id];
@@ -2493,19 +2483,14 @@ function stopCountdownTick() {
 // ============================================================
 // Host-Löschbutton: löscht den aktuellen Raum komplett (nur Host).
 // ============================================================
-async function deleteRoomAsHost() {
+// Interne Variante ohne eigenen Confirm-Dialog: wird aus leaveRoom() heraus
+// aufgerufen, nachdem der Host das Löschen bereits bestätigt hat.
+async function deleteRoomAfterConfirm() {
   if (!currentRoomCode) return;
   if (!roomCache || roomCache.hostId !== currentPlayerId) {
     showToast("Nur der Host kann den Raum löschen.");
     return;
   }
-  const ok = await askConfirm({
-    title: "Raum löschen?",
-    message: "Möchtest du diesen Raum wirklich löschen? Alle Spieler verlieren den Zugriff.",
-    okText: "Raum löschen",
-    cancelText: "Abbrechen"
-  });
-  if (!ok) return;
 
   const code = currentRoomCode;
   teardownPresence();
@@ -2515,7 +2500,7 @@ async function deleteRoomAsHost() {
     await set(roomRef(code), null);
     showToast("Raum gelöscht.");
   } catch (e) {
-    alert(describeFirebaseError(e, "deleteRoomAsHost (set null auf rooms/" + code + ")"));
+    alert(describeFirebaseError(e, "deleteRoomAfterConfirm (set null auf rooms/" + code + ")"));
     // Bei Fehler State trotzdem zurücksetzen, sonst hängt der Host fest.
   }
 
@@ -2529,13 +2514,30 @@ async function deleteRoomAsHost() {
 async function leaveRoom() {
   if (!currentRoomCode) return;
 
-  // Im laufenden Spiel: freundlicher Hinweis, dass der Platz 2 Minuten reserviert bleibt.
-  const inGame = !!roomCache && roomCache.phase !== "lobby" && roomCache.phase !== "finished";
-  const confirmMsg = inGame
-    ? "Möchtest du den Raum wirklich verlassen?\n\nDein Platz bleibt 2 Minuten reserviert – du kannst mit demselben Gerät/Browser einfach wieder reinkommen."
-    : "Möchtest du den Raum wirklich verlassen?";
-  const leaveConfirm = confirm(confirmMsg);
+  const meIsHost = !!roomCache && roomCache.hostId === currentPlayerId;
+
+  // Erste Bestätigung: Verlassen mit Hinweis auf 2-Minuten-Rejoin-Reservierung.
+  const leaveConfirm = await askConfirm({
+    title: "Raum verlassen?",
+    message: "Dein Platz bleibt 2 Minuten reserviert – du kannst mit demselben Gerät/Browser einfach wieder reinkommen.\n\nMöchtest du den Raum wirklich verlassen?",
+    okText: "Verlassen",
+    cancelText: "Abbrechen"
+  });
   if (!leaveConfirm) return;
+
+  // Host: nach dem Verlassen-OK zusätzlich fragen, ob der Raum gleich gelöscht werden soll.
+  if (meIsHost) {
+    const deleteAlso = await askConfirm({
+      title: "Raum löschen?",
+      message: "Möchtest du den Raum löschen?\n\nJa: Raum wird komplett entfernt, alle Spieler verlieren den Zugriff.\nNein: Du verlässt normal, der Raum bleibt bestehen (Host wird ggf. übergeben).",
+      okText: "Ja, Raum löschen",
+      cancelText: "Nein, nur verlassen"
+    });
+    if (deleteAlso) {
+      await deleteRoomAfterConfirm();
+      return;
+    }
+  }
 
   const roomReference = roomRef(currentRoomCode);
 
@@ -3347,7 +3349,6 @@ els.addBotBtn.addEventListener("click", () => addBot(1));
 els.fillBotsBtn.addEventListener("click", fillBotsTo3);
 els.bidBtn.addEventListener("click", sendBid);
 els.leaveBtn.addEventListener("click", leaveRoom);
-els.deleteRoomBtn?.addEventListener("click", deleteRoomAsHost);
 els.nextRoundBtn.addEventListener("click", nextRound);
 els.closeOverlayBtn?.addEventListener("click", hideRoundOverlay);
 
