@@ -122,8 +122,16 @@ const els = {
   confirmTitle: document.getElementById("confirmTitle"),
   confirmMessage: document.getElementById("confirmMessage"),
   confirmOkBtn: document.getElementById("confirmOkBtn"),
-  confirmCancelBtn: document.getElementById("confirmCancelBtn")
+  confirmCancelBtn: document.getElementById("confirmCancelBtn"),
+  pauseBtn: document.getElementById("pauseBtn"),
+  pauseBanner: document.getElementById("pauseBanner"),
+  pauseBannerText: document.getElementById("pauseBannerText")
 };
+
+// Hilfsfunktion: ist der Raum gerade pausiert?
+function isRoomPaused(state) {
+  return !!(state && state.paused === true);
+}
 
 const LOCAL = {
   playerId: "wizard.playerId",
@@ -823,11 +831,26 @@ let __activeRoomsUnsub = null;
 function subscribeActiveRooms() {
   if (__activeRoomsUnsub) return;
   const roomsRef = ref(db, "rooms");
+  // Sofort einen leeren Zustand zeichnen, damit die Box auf der Join-Seite
+  // garantiert sichtbar ist – auch falls der erste Snapshot lange dauert.
+  try { renderActiveRooms({}); } catch (e) {}
   __activeRoomsUnsub = onValue(roomsRef, snap => {
     if (els.joinView.classList.contains("hidden")) return;
     renderActiveRooms(snap.val() || {});
   }, (err) => {
+    // Wenn die RTDB-Regeln globales Lesen unter /rooms nicht erlauben,
+    // landen wir hier (PERMISSION_DENIED). In diesem Fall zeigen wir der
+    // Nutzerin einen kurzen Hinweis statt einer leeren Box.
     console.warn("Aktive Räume konnten nicht geladen werden:", err?.message);
+    const list = els.activeRoomsList;
+    if (els.activeRoomsBox && list) {
+      els.activeRoomsBox.classList.remove("hidden");
+      list.innerHTML = "";
+      const note = document.createElement("div");
+      note.className = "activeRoomsEmpty";
+      note.textContent = "Räume können nicht geladen werden. Prüfe die Firebase-Regeln („rooms“ muss lesbar sein).";
+      list.appendChild(note);
+    }
   });
 }
 function unsubscribeActiveRooms() {
@@ -856,54 +879,79 @@ function renderActiveRooms(roomsObj) {
   const list = els.activeRoomsList;
   if (!box || !list) return;
 
+  // Liste ist auf der Join-Seite immer sichtbar (mit leerem Zustand statt versteckt).
+  // Das vermeidet, dass die Liste bei Edge-Cases (kurz keine Räume, fehlendes createdAt etc.)
+  // einfach verschwindet und die Nutzerin denkt, das Feature funktioniere nicht.
+  box.classList.remove("hidden");
+
   const now = Date.now();
   const rows = [];
-  for (const code of Object.keys(roomsObj)) {
-    const room = roomsObj[code];
-    if (!room || typeof room !== "object") continue;
-    const players = room.players && typeof room.players === "object" ? room.players : null;
-    if (!players) continue;
-    const playerIdsArr = Object.keys(players);
-    if (playerIdsArr.length === 0) continue;
-    const createdAt = typeof room.createdAt === "number" ? room.createdAt : 0;
-    if (createdAt && now - createdAt > ACTIVE_ROOM_MAX_AGE_MS) continue;
-    rows.push({
-      code,
-      phase: room.phase || "lobby",
-      count: playerIdsArr.length,
-      max: MAX_PLAYERS,
-      createdAt
-    });
+  if (roomsObj && typeof roomsObj === "object") {
+    for (const code of Object.keys(roomsObj)) {
+      const room = roomsObj[code];
+      if (!room || typeof room !== "object") continue;
+      // Raumcode muss zum erlaubten Schema passen (vermeidet Schrottdaten).
+      if (!/^[A-Z0-9]{4,8}$/.test(code)) continue;
+      const players = room.players && typeof room.players === "object" ? room.players : {};
+      const playerIdsArr = Object.keys(players);
+      // Fallback-Zeitstempel: createdAt > updatedAt > listedAt. Wenn nichts gesetzt ist,
+      // bleibt das Alter bei 0, sodass der Raum NICHT automatisch unsichtbar wird.
+      const tsCandidates = [
+        typeof room.createdAt === "number" ? room.createdAt : 0,
+        typeof room.updatedAt === "number" ? room.updatedAt : 0,
+        typeof room.listedAt === "number" ? room.listedAt : 0
+      ];
+      const ts = Math.max.apply(null, tsCandidates);
+      // Nur sehr alte Räume verbergen; wenn gar kein Zeitstempel da ist, NICHT filtern.
+      if (ts && now - ts > ACTIVE_ROOM_MAX_AGE_MS) continue;
+      // Endgültig beendete Räume sollen nicht in der Liste auftauchen.
+      if (room.phase === "finished") continue;
+      rows.push({
+        code,
+        phase: room.phase || "lobby",
+        paused: room.paused === true,
+        count: playerIdsArr.length,
+        max: MAX_PLAYERS,
+        ts
+      });
+    }
   }
 
   rows.sort((a, b) => {
+    // Lobby-Räume zuerst (die kann man am leichtesten betreten),
+    // dann nach Spielerzahl (größere Räume oben), dann nach Frische.
     const al = a.phase === "lobby" ? 0 : 1;
     const bl = b.phase === "lobby" ? 0 : 1;
     if (al !== bl) return al - bl;
     if (b.count !== a.count) return b.count - a.count;
-    return (b.createdAt || 0) - (a.createdAt || 0);
+    return (b.ts || 0) - (a.ts || 0);
   });
 
   const display = rows.slice(0, 8);
+  list.innerHTML = "";
 
   if (display.length === 0) {
-    box.classList.add("hidden");
-    list.innerHTML = "";
+    const empty = document.createElement("div");
+    empty.className = "activeRoomsEmpty";
+    empty.textContent = "Noch keine aktiven Räume. Erstelle den ersten!";
+    list.appendChild(empty);
     return;
   }
-  box.classList.remove("hidden");
-  list.innerHTML = "";
+
   for (const r of display) {
     const item = document.createElement("button");
     item.type = "button";
     item.className = "activeRoomItem";
-    const phClass = r.phase === "lobby" ? "lobby" : (r.phase === "finished" ? "" : "playing");
+    const phClass = r.paused
+      ? "paused"
+      : (r.phase === "lobby" ? "lobby" : (r.phase === "finished" ? "" : "playing"));
+    const phLabel = r.paused ? "⏸ Pause" : phaseLabelShort(r.phase);
     item.innerHTML = `
       <span class="code">${r.code}</span>
       <span class="meta">
         <span><strong>${r.count}</strong>/${r.max} Spieler</span>
       </span>
-      <span class="phase ${phClass}">${phaseLabelShort(r.phase)}</span>
+      <span class="phase ${phClass}">${phLabel}</span>
     `;
     item.addEventListener("click", () => onActiveRoomClick(r));
     list.appendChild(item);
@@ -1184,13 +1232,15 @@ function renderRoom(state) {
   els.nextRoundBtn.disabled = !(isFinished && state.hostId === currentPlayerId);
   els.nextRoundBtn.textContent = "Neues Spiel";
 
-  if (state.trickReadyToClear) {
+  if (state.trickReadyToClear && !isRoomPaused(state)) {
     if (state.hostId === currentPlayerId) {
       if (!window.clearTrickTimeout) {
         window.clearTrickTimeout = setTimeout(async () => {
           window.clearTrickTimeout = null;
+          if (isRoomPaused(roomCache)) return; // Sicherheitsnetz: Pause unterbricht das Abräumen
           await runTransaction(roomRef(currentRoomCode), r => {
             if (!r || !r.trickReadyToClear) return r;
+            if (isRoomPaused(r)) return r;
             r.currentTrick = [];
             r.trickReadyToClear = false;
             r.turnIndex = r.order.indexOf(r.trickWinner);
@@ -1226,6 +1276,7 @@ function renderRoom(state) {
   maybeAutoPassBots(state);
   maybeAutoCloudAdjustBots(state);
   syncCloudAdjustOverlay(state);
+  renderPauseControls(state);
 }
 
 function botCloudDelta(room, playerId) {
@@ -1245,6 +1296,7 @@ function botCloudDelta(room, playerId) {
 function maybeAutoCloudAdjustBots(state) {
   if (!state || state.phase !== "cloud_adjust") return;
   if (state.hostId !== currentPlayerId) return;
+  if (isRoomPaused(state)) return;
   const targets = state.cloudAdjustTargets || [];
   const needs = targets.filter(id => isBot(state, id) && !(state.cloudAdjust && state.cloudAdjust[id] && state.cloudAdjust[id].done));
   if (!needs.length) return;
@@ -1303,6 +1355,7 @@ function syncCloudAdjustOverlay(state) {
 function maybeAutoPassBots(state) {
   if (!state || state.phase !== "passing_cards") return;
   if (state.hostId !== currentPlayerId) return;
+  if (isRoomPaused(state)) return;
   const order = playerIds(state);
   const needs = order.filter(id => isBot(state, id) && !(state.pass && state.pass[id]));
   if (!needs.length) return;
@@ -1418,7 +1471,8 @@ let __autoNextTimer = null;
 function scheduleAutoNextIfNeeded(state) {
   if (!state) return;
   // Auto-Weiter gilt nur für round_summary, nicht für finished (dort soll der Gewinner-Screen bleiben).
-  if (state.phase !== "round_summary" || !state.fastMode || state.hostId !== currentPlayerId) {
+  // Im Pause-Modus passiert NICHTS automatisch.
+  if (state.phase !== "round_summary" || !state.fastMode || state.hostId !== currentPlayerId || isRoomPaused(state)) {
     if (__autoNextTimer) { clearTimeout(__autoNextTimer); __autoNextTimer = null; }
     return;
   }
@@ -1429,6 +1483,7 @@ function scheduleAutoNextIfNeeded(state) {
     if (roomCache.phase !== "round_summary") return;
     if (!roomCache.fastMode) return;
     if (roomCache.hostId !== currentPlayerId) return;
+    if (isRoomPaused(roomCache)) return;
     try { await nextRound(); } catch (e) { console.error("Auto-Weiter fehlgeschlagen:", e); }
   }, 2400);
 }
@@ -1928,6 +1983,11 @@ function roomStateOrDefault(roomCode, playerName, playerId) {
     specials: defaultSpecialsFor(false),
     fastMode: false,
     strictBidRule: true,
+    paused: false,
+    pausedAt: null,
+    pausedBy: null,
+    updatedAt: Date.now(),
+    listedAt: Date.now(),
     players: {
       [playerId]: {
         id: playerId,
@@ -1977,8 +2037,12 @@ async function joinOrCreateRoom(isCreate = false) {
     if (!room) {
       room = roomStateOrDefault(roomCode, name, currentPlayerId);
       room.createdAt = Date.now();
+      room.updatedAt = Date.now();
+      room.listedAt = Date.now();
       return room;
     }
+    // Bei jedem Beitritt aktualisieren wir updatedAt, damit der Raum frisch in der Liste bleibt.
+    room.updatedAt = Date.now();
 
     room.players = room.players || {};
     room.order = Array.isArray(room.order) ? room.order : Object.keys(room.players);
@@ -2036,6 +2100,15 @@ async function joinOrCreateRoom(isCreate = false) {
   hideInviteBanner();
   showJoinView(false);
   listenToRoom(roomCode);
+}
+
+// Sicherstellen, dass eine Raum-Änderung auch das updatedAt-Feld setzt.
+// Wird von Schreibstellen aufgerufen, die nicht selbst updatedAt schreiben.
+function touchRoom(room) {
+  if (room && typeof room === "object") {
+    room.updatedAt = Date.now();
+  }
+  return room;
 }
 
 function listenToRoom(roomCode) {
@@ -2145,6 +2218,8 @@ function markPlayerDisconnected(room, playerId) {
 // Wird vom Host periodisch aufgerufen, sodass nicht alle Clients konkurrieren.
 function sweepExpiredPlayers(room) {
   if (!room || !room.players) return false;
+  // Pause: Plätze bleiben dauerhaft reserviert, kein endgültiges Entfernen.
+  if (room.paused === true) return false;
   const now = Date.now();
   let changed = false;
   const toRemove = [];
@@ -2194,6 +2269,7 @@ function startGraceSweep() {
   __sweepTimer = setInterval(async () => {
     if (!currentRoomCode || !roomCache) return;
     if (roomCache.hostId !== currentPlayerId) return;
+    if (isRoomPaused(roomCache)) return; // Pause: kein Sweep
     // Nur sweepen, wenn tatsächlich eine Frist abgelaufen ist.
     const expired = Object.values(roomCache.players || {}).some(p => {
       if (!p || p.isBot) return false;
@@ -2333,6 +2409,98 @@ async function startGame() {
     if (room.phase !== "lobby") return room;
     return initializeGame(room);
   });
+}
+
+// ============================================================
+// PAUSE / RESUME
+// Pause friert das Spiel ein, ohne die Phase zu verändern. Die Plätze-Reservierung
+// läuft NICHT ab, Auto-Aktionen (Bots, Fast-Mode, Stich-Abräumen) sind aus.
+// ============================================================
+async function pauseGame() {
+  if (!roomCache || roomCache.hostId !== currentPlayerId) return;
+  if (roomCache.phase === "lobby" || roomCache.phase === "finished") return; // nichts zu pausieren
+  if (isRoomPaused(roomCache)) return;
+  const meName = roomCache.players?.[currentPlayerId]?.name || currentName || "Host";
+  try {
+    await runTransaction(roomRef(currentRoomCode), room => {
+      if (!room) return room;
+      if (room.phase === "lobby" || room.phase === "finished") return room;
+      room.paused = true;
+      room.pausedAt = Date.now();
+      room.pausedBy = String(meName).slice(0, 64);
+      room.message = `⏸ ${meName} hat das Spiel pausiert. Plätze bleiben dauerhaft reserviert.`;
+      room.updatedAt = Date.now();
+      return room;
+    });
+    showToast("⏸ Spiel pausiert");
+  } catch (e) {
+    console.error("Pausieren fehlgeschlagen:", e);
+  }
+}
+
+async function resumeGame() {
+  if (!roomCache || roomCache.hostId !== currentPlayerId) return;
+  if (!isRoomPaused(roomCache)) return;
+  const meName = roomCache.players?.[currentPlayerId]?.name || currentName || "Host";
+  try {
+    await runTransaction(roomRef(currentRoomCode), room => {
+      if (!room) return room;
+      room.paused = false;
+      room.pausedAt = null;
+      // pausedBy darf stehen bleiben, schadet nichts. Setze updatedAt.
+      room.updatedAt = Date.now();
+      // Faires Reset: Nach einer Pause bekommen offline-Spieler eine
+      // frische Rejoin-Frist, statt sofort wegen abgelaufenem leaveDeadline zu fliegen.
+      if (room.players && typeof room.players === "object") {
+        const now = Date.now();
+        for (const id of Object.keys(room.players)) {
+          const p = room.players[id];
+          if (!p || p.isBot) continue;
+          if (typeof p.leaveDeadline === "number" && p.leaveDeadline > 0) {
+            p.leaveDeadline = now + LEAVE_GRACE_MS;
+          }
+        }
+      }
+      room.message = `▶️ ${meName} hat das Spiel fortgesetzt.`;
+      return room;
+    });
+    showToast("▶️ Spiel fortgesetzt");
+  } catch (e) {
+    console.error("Fortsetzen fehlgeschlagen:", e);
+  }
+}
+
+// Pause-Button & -Banner im Game-View synchronisieren.
+function renderPauseControls(state) {
+  const inGame = !!state && state.phase !== "lobby" && state.phase !== "finished";
+  const paused = isRoomPaused(state);
+  const meIsHost = !!state && state.hostId === currentPlayerId;
+
+  if (els.pauseBtn) {
+    if (inGame) {
+      els.pauseBtn.classList.remove("hidden");
+      els.pauseBtn.disabled = !meIsHost;
+      els.pauseBtn.textContent = paused ? "▶️ Spiel fortsetzen" : "⏸ Spiel pausieren";
+      els.pauseBtn.classList.toggle("resume", !!paused);
+      els.pauseBtn.setAttribute("aria-pressed", paused ? "true" : "false");
+      els.pauseBtn.title = meIsHost
+        ? (paused ? "Spiel fortsetzen" : "Plätze bleiben während Pause reserviert")
+        : "Nur der Host kann pausieren";
+    } else {
+      els.pauseBtn.classList.add("hidden");
+    }
+  }
+
+  if (els.pauseBanner) {
+    els.pauseBanner.classList.toggle("hidden", !paused);
+    if (paused && els.pauseBannerText) {
+      const who = state && state.pausedBy ? String(state.pausedBy) : "Host";
+      const note = meIsHost
+        ? "Du bist der Host. Tippe oben auf „Spiel fortsetzen“, sobald alle wieder bereit sind."
+        : "Komm später über denselben Raumcode oder Link einfach wieder rein. Dein Platz bleibt reserviert.";
+      els.pauseBannerText.textContent = `Pausiert von ${who}. ${note}`;
+    }
+  }
 }
 
 async function resetToLobby() {
@@ -2663,6 +2831,7 @@ function maybeScheduleBot(state) {
   if (!state) return;
   if (state.phase === "round_summary" || state.phase === "finished" || state.roundNo === 0) return;
   if (state.trickReadyToClear) return; 
+  if (isRoomPaused(state)) return; // Pause: keine Bot-Züge
 
   const order = playerIds(state);
   
@@ -2950,6 +3119,13 @@ els.createBtn.addEventListener("click", () => {
 });
 els.startBtn.addEventListener("click", startGame);
 els.resetBtn.addEventListener("click", resetToLobby);
+els.pauseBtn?.addEventListener("click", () => {
+  if (isRoomPaused(roomCache)) {
+    resumeGame();
+  } else {
+    pauseGame();
+  }
+});
 els.addBotBtn.addEventListener("click", () => addBot(1));
 els.fillBotsBtn.addEventListener("click", fillBotsTo3);
 els.bidBtn.addEventListener("click", sendBid);

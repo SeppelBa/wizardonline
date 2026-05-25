@@ -4,6 +4,7 @@
     ".write": false,
 
     "rooms": {
+      ".read": true,
       "$roomCode": {
         ".read": true,
         ".write": "$roomCode.matches(/^[A-Z0-9]{4,8}$/)",
@@ -14,10 +15,15 @@
         "roundNo":     { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 30" },
         "maxRound":    { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 30" },
         "createdAt":   { ".validate": "newData.isNumber()" },
+        "updatedAt":   { ".validate": "newData.isNumber()" },
+        "listedAt":    { ".validate": "newData.isNumber()" },
         "hostId":      { ".validate": "newData.isString() && newData.val().length <= 64" },
         "anniversaryMode": { ".validate": "newData.isBoolean()" },
         "strictBidRule":   { ".validate": "newData.isBoolean()" },
         "fastMode":        { ".validate": "newData.isBoolean()" },
+        "paused":          { ".validate": "newData.isBoolean()" },
+        "pausedAt":        { ".validate": "newData.isNumber() && newData.val() >= 0" },
+        "pausedBy":        { ".validate": "newData.isString() && newData.val().length <= 64" },
         "specials": {
           "$specialKey": {
             ".validate": "newData.isBoolean() && $specialKey.matches(/^(dragon|pixie|bomb|werewolf|shapeshifter|juggler|cloud)$/)"

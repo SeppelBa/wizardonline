@@ -1478,3 +1478,55 @@ button:disabled{
   font-weight:700;
   letter-spacing:0.06em;
 }
+
+/* ============================================
+   Pause-Modus (Host-Button + Banner)
+   ============================================ */
+.pauseBanner{
+  margin-top:12px;
+  padding:14px 16px;
+  background:linear-gradient(135deg, rgba(234,179,8,0.16), rgba(139,92,246,0.10));
+  border:1px solid rgba(234,179,8,0.45);
+  border-radius:14px;
+  color:#fde68a;
+}
+.pauseBanner strong{
+  display:block;
+  font-size:1rem;
+  color:#fef3c7;
+  margin-bottom:4px;
+  letter-spacing:0.02em;
+}
+.pauseBanner p{
+  margin:0;
+  font-size:0.88rem;
+  line-height:1.45;
+  color:#fde68a;
+  opacity:0.95;
+}
+#pauseBtn{
+  background:rgba(234,179,8,0.18);
+  border:1px solid rgba(234,179,8,0.5);
+  color:#fef3c7;
+}
+#pauseBtn:hover:not(:disabled),
+#pauseBtn:focus-visible:not(:disabled){
+  background:rgba(234,179,8,0.28);
+  border-color:rgba(234,179,8,0.7);
+  outline:none;
+}
+#pauseBtn.resume{
+  background:rgba(34,197,94,0.18);
+  border-color:rgba(34,197,94,0.55);
+  color:#bbf7d0;
+}
+#pauseBtn.resume:hover:not(:disabled),
+#pauseBtn.resume:focus-visible:not(:disabled){
+  background:rgba(34,197,94,0.28);
+  border-color:rgba(34,197,94,0.75);
+}
+
+.activeRoomItem .phase.paused{
+  background:rgba(234,179,8,0.18);
+  color:#fde68a;
+}

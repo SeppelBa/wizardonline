@@ -205,12 +205,27 @@
             </button>
 
             <button
+              id="pauseBtn"
+              class="secondary hidden"
+              type="button"
+            >
+              ⏸ Spiel pausieren
+            </button>
+
+            <button
               id="resetBtn"
               class="danger"
             >
               Lobby
             </button>
 
+          </div>
+
+          <div id="pauseBanner" class="pauseBanner hidden" role="status" aria-live="polite">
+            <strong>⏸ Spiel ist pausiert</strong>
+            <p id="pauseBannerText">
+              Plätze bleiben dauerhaft reserviert. Komm später über denselben Raumcode oder Link einfach wieder rein.
+            </p>
           </div>
 
         </section>
