@@ -30,6 +30,12 @@ Dieses Projekt ist für GitHub Pages + Firebase Realtime Database gedacht.
 - Spieler, die kurz die Verbindung verlieren, werden als „offline" markiert und können einfach wieder reinkommen – ihre Punkte und ihr Platz bleiben erhalten.
 - Nach allen Runden zeigt ein eigener Gewinner-Screen das Podium an. Das Ergebnis lässt sich kopieren.
 
+## Neu seit Mai 2026
+- **Rejoin-Frist (2 Minuten):** Wer das Spiel mitten in einer Runde verlässt oder kurz offline geht, behält den Sitzplatz für zwei Minuten. In der Spielerliste läuft ein Countdown-Badge `⏳ MM:SS`. Nach Ablauf wird der Platz automatisch freigegeben und ggf. der Host weitergereicht.
+- **Aktive Räume direkt auf der Startseite:** Eine Live-Liste zeigt offene Räume mit Raumcode, Spielerzahl und Phase. Ein Tipp füllt den Code aus oder tritt direkt bei, sofern der Name schon gesetzt ist.
+- **Einladungslinks mit Namensabfrage:** Beim Aufruf von `?room=CODE` oder QR-Scan landet man nicht länger stillschweigend als Zuschauer im Raum. Stattdessen erscheint ein Einladungs-Banner mit vorausgefülltem Code, und das Namensfeld bleibt im Fokus. Läuft im Zielraum bereits eine Partie, weist der Banner klar auf den Zuschauer-Modus hin. Reconnect mit derselben Browser-Session funktioniert weiterhin automatisch.
+- **Sicherheitsabfrage für Reset:** Setzt der Host die Runde mitten im Spiel zurück, erscheint zuerst eine mobiltaugliche Bestätigungsabfrage `Möchtest du wirklich die laufende Runde zurücksetzen?`. In der Lobby gibt es weiterhin keinen unnötigen Klick.
+
 ## Wolke (Sonderkarte)
 - Wert 9¾, kann immer gespielt werden (auch wenn Bedienen möglich wäre).
 - Beim Ausspielen wählt der Spieler eine Farbe; auch Trumpf möglich.

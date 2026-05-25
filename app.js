@@ -18,6 +18,10 @@ const db = getDatabase(app);
 
 const MAX_PLAYERS = 6;
 const MIN_PLAYERS = 2; 
+// Wie lange ein Spielerplatz nach Disconnect/Leave noch reserviert bleibt (mid-game).
+const LEAVE_GRACE_MS = 2 * 60 * 1000; // 2 Minuten
+// Wie alt darf ein Raum maximal sein, damit er in der „Aktive Räume"-Liste auftaucht.
+const ACTIVE_ROOM_MAX_AGE_MS = 6 * 60 * 60 * 1000; // 6 h
 const SUITS = [
   { key: "hearts", label: "Herz", short: "♥", css: "red" },
   { key: "spades", label: "Pik", short: "♠", css: "black" },
@@ -109,7 +113,16 @@ const els = {
   closeSettingsBtn: document.getElementById("closeSettingsBtn"),
   statsOverlay: document.getElementById("statsOverlay"),
   closeStatsBtn: document.getElementById("closeStatsBtn"),
-  statsContent: document.getElementById("statsContent")
+  statsContent: document.getElementById("statsContent"),
+  activeRoomsBox: document.getElementById("activeRoomsBox"),
+  activeRoomsList: document.getElementById("activeRoomsList"),
+  inviteBanner: document.getElementById("inviteBanner"),
+  inviteBannerCode: document.getElementById("inviteBannerCode"),
+  confirmOverlay: document.getElementById("confirmOverlay"),
+  confirmTitle: document.getElementById("confirmTitle"),
+  confirmMessage: document.getElementById("confirmMessage"),
+  confirmOkBtn: document.getElementById("confirmOkBtn"),
+  confirmCancelBtn: document.getElementById("confirmCancelBtn")
 };
 
 const LOCAL = {
@@ -797,8 +810,179 @@ function showJoinView(show) {
   els.settingsBtn?.classList.toggle("hidden", show);
   if (show) {
     fetchGlobalLeaderboard();
+    subscribeActiveRooms();
+  } else {
+    unsubscribeActiveRooms();
   }
 }
+
+// ============================================================
+// Feature 2: Aktive Räume auf der Join-Seite live anzeigen.
+// ============================================================
+let __activeRoomsUnsub = null;
+function subscribeActiveRooms() {
+  if (__activeRoomsUnsub) return;
+  const roomsRef = ref(db, "rooms");
+  __activeRoomsUnsub = onValue(roomsRef, snap => {
+    if (els.joinView.classList.contains("hidden")) return;
+    renderActiveRooms(snap.val() || {});
+  }, (err) => {
+    console.warn("Aktive Räume konnten nicht geladen werden:", err?.message);
+  });
+}
+function unsubscribeActiveRooms() {
+  if (typeof __activeRoomsUnsub === "function") {
+    __activeRoomsUnsub();
+  }
+  __activeRoomsUnsub = null;
+}
+
+function phaseLabelShort(phase) {
+  switch (phase) {
+    case "lobby": return "Lobby";
+    case "choose_trump": return "Trumpfwahl";
+    case "bidding": return "Ansage";
+    case "playing": return "Läuft";
+    case "passing_cards": return "Tausch";
+    case "cloud_adjust": return "Wolke";
+    case "round_summary": return "Rundenende";
+    case "finished": return "Beendet";
+    default: return phase || "—";
+  }
+}
+
+function renderActiveRooms(roomsObj) {
+  const box = els.activeRoomsBox;
+  const list = els.activeRoomsList;
+  if (!box || !list) return;
+
+  const now = Date.now();
+  const rows = [];
+  for (const code of Object.keys(roomsObj)) {
+    const room = roomsObj[code];
+    if (!room || typeof room !== "object") continue;
+    const players = room.players && typeof room.players === "object" ? room.players : null;
+    if (!players) continue;
+    const playerIdsArr = Object.keys(players);
+    if (playerIdsArr.length === 0) continue;
+    const createdAt = typeof room.createdAt === "number" ? room.createdAt : 0;
+    if (createdAt && now - createdAt > ACTIVE_ROOM_MAX_AGE_MS) continue;
+    rows.push({
+      code,
+      phase: room.phase || "lobby",
+      count: playerIdsArr.length,
+      max: MAX_PLAYERS,
+      createdAt
+    });
+  }
+
+  rows.sort((a, b) => {
+    const al = a.phase === "lobby" ? 0 : 1;
+    const bl = b.phase === "lobby" ? 0 : 1;
+    if (al !== bl) return al - bl;
+    if (b.count !== a.count) return b.count - a.count;
+    return (b.createdAt || 0) - (a.createdAt || 0);
+  });
+
+  const display = rows.slice(0, 8);
+
+  if (display.length === 0) {
+    box.classList.add("hidden");
+    list.innerHTML = "";
+    return;
+  }
+  box.classList.remove("hidden");
+  list.innerHTML = "";
+  for (const r of display) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "activeRoomItem";
+    const phClass = r.phase === "lobby" ? "lobby" : (r.phase === "finished" ? "" : "playing");
+    item.innerHTML = `
+      <span class="code">${r.code}</span>
+      <span class="meta">
+        <span><strong>${r.count}</strong>/${r.max} Spieler</span>
+      </span>
+      <span class="phase ${phClass}">${phaseLabelShort(r.phase)}</span>
+    `;
+    item.addEventListener("click", () => onActiveRoomClick(r));
+    list.appendChild(item);
+  }
+}
+
+function onActiveRoomClick(row) {
+  if (!row || !row.code) return;
+  els.roomInput.value = row.code;
+  const name = (els.nameInput.value || localStorage.getItem(LOCAL.playerName) || "").trim();
+  if (!name) {
+    showInviteBanner(row.code);
+    els.nameInput.focus();
+    return;
+  }
+  hideInviteBanner();
+  joinOrCreateRoom(false);
+}
+
+// ============================================================
+// Feature 3: Invite-Banner für ?room=CODE-Links
+// ============================================================
+function showInviteBanner(code) {
+  if (!els.inviteBanner || !els.inviteBannerCode) return;
+  els.inviteBannerCode.textContent = code || "—";
+  els.inviteBanner.classList.remove("hidden");
+  // Phase prüfen, um ggf. einen Zuschauer-Hinweis einzublenden.
+  if (!code) return;
+  get(ref(db, `rooms/${code}/phase`)).then(snap => {
+    const phase = snap.exists() ? snap.val() : null;
+    const inner = els.inviteBanner.querySelector("p");
+    if (!inner) return;
+    if (phase && phase !== "lobby" && phase !== "finished") {
+      inner.innerHTML = `Im Raum <span id="inviteBannerCode">${code}</span> läuft bereits eine Partie. Mit deinem Namen kannst du als <strong>Zuschauer</strong> beitreten.`;
+    } else {
+      inner.innerHTML = `Du wurdest in Raum <span id="inviteBannerCode">${code}</span> eingeladen. Trage oben deinen Namen ein und tippe auf <em>Raum betreten</em>.`;
+    }
+  }).catch(() => {});
+}
+function hideInviteBanner() {
+  if (!els.inviteBanner) return;
+  els.inviteBanner.classList.add("hidden");
+}
+
+// ============================================================
+// Feature 4: Wiederverwendbares Confirm-Overlay
+// ============================================================
+function askConfirm({ title = "Bestätigen", message = "Bist du sicher?", okText = "Bestätigen", cancelText = "Abbrechen" } = {}) {
+  return new Promise(resolve => {
+    const ov = els.confirmOverlay;
+    if (!ov || !els.confirmOkBtn || !els.confirmCancelBtn) {
+      resolve(window.confirm(message));
+      return;
+    }
+    if (els.confirmTitle) els.confirmTitle.textContent = title;
+    if (els.confirmMessage) els.confirmMessage.textContent = message;
+    els.confirmOkBtn.textContent = okText;
+    els.confirmCancelBtn.textContent = cancelText;
+
+    const close = (val) => {
+      ov.classList.add("hidden");
+      els.confirmOkBtn.removeEventListener("click", okHandler);
+      els.confirmCancelBtn.removeEventListener("click", cancelHandler);
+      ov.removeEventListener("click", backdropHandler);
+      document.removeEventListener("keydown", keyHandler);
+      resolve(val);
+    };
+    const okHandler = () => close(true);
+    const cancelHandler = () => close(false);
+    const backdropHandler = (e) => { if (e.target === ov) close(false); };
+    const keyHandler = (e) => { if (e.key === "Escape") close(false); };
+    els.confirmOkBtn.addEventListener("click", okHandler);
+    els.confirmCancelBtn.addEventListener("click", cancelHandler);
+    ov.addEventListener("click", backdropHandler);
+    document.addEventListener("keydown", keyHandler);
+    ov.classList.remove("hidden");
+  });
+}
+
 
 function setStatusText(state) {
   els.roomLabel.textContent = currentRoomCode || "—";
@@ -849,11 +1033,24 @@ function renderRoom(state) {
   order.forEach((id, index) => {
     const p = state.players[id];
     const offline = isPlayerOffline(p);
+    const graceSec = graceSecondsLeft(p);
+
+    let offlineBadge = "";
+    if (offline) {
+      if (graceSec !== null && graceSec > 0) {
+        const mm = Math.floor(graceSec / 60);
+        const ss = graceSec % 60;
+        const timeLabel = mm > 0 ? `${mm}:${String(ss).padStart(2, "0")}` : `${graceSec}s`;
+        offlineBadge = `<span class="badge offline" title="Rejoin-Frist läuft">⏳ ${timeLabel}</span>`;
+      } else {
+        offlineBadge = '<span class="badge offline" title="Kurz weg – Rejoin möglich">⛅ offline</span>';
+      }
+    }
 
     const row = document.createElement("div");
     row.className = "playerRow" + (offline ? " offline" : "");
     row.innerHTML = `
-      <div class="name">${escapeHtml(p.name)} ${id === currentPlayerId ? '<span class="badge me">Ich</span>' : ''} ${p.isBot ? '<span class="badge bot">Bot</span>' : ''} ${state.hostId === id ? '<span class="badge host">Host</span>' : ''} ${offline ? '<span class="badge offline" title="Kurz weg – Rejoin möglich">⛅ offline</span>' : ''}</div>
+      <div class="name">${escapeHtml(p.name)} ${id === currentPlayerId ? '<span class="badge me">Ich</span>' : ''} ${p.isBot ? '<span class="badge bot">Bot</span>' : ''} ${state.hostId === id ? '<span class="badge host">Host</span>' : ''} ${offlineBadge}</div>
       <div>${Number(p.score || 0)} P</div>
       <div>${currentTurn === id && !state.trickReadyToClear ? (state.phase === "bidding" ? '<span class="badge">Ansage</span>' : '<span class="badge">Zug</span>') : ''}</div>
     `;
@@ -1803,11 +2000,14 @@ async function joinOrCreateRoom(isCreate = false) {
         };
         room.order.push(currentPlayerId);
       } else {
+        const wasOffline = isPlayerOffline(room.players[currentPlayerId]);
         room.players[currentPlayerId].name = name;
         room.players[currentPlayerId].connected = true;
         room.players[currentPlayerId].lastSeen = Date.now();
+        room.players[currentPlayerId].disconnectedAt = null;
+        room.players[currentPlayerId].leaveDeadline = null;
         // Falls jemand "kurz weg" war, freundlich anzeigen
-        if (room.phase !== "lobby") {
+        if (room.phase !== "lobby" && wasOffline) {
           room.message = `${name} ist wieder da.`;
         }
       }
@@ -1823,6 +2023,8 @@ async function joinOrCreateRoom(isCreate = false) {
     room.players[currentPlayerId].name = name;
     room.players[currentPlayerId].connected = true;
     room.players[currentPlayerId].lastSeen = Date.now();
+    room.players[currentPlayerId].disconnectedAt = null;
+    room.players[currentPlayerId].leaveDeadline = null;
     return room;
   });
 
@@ -1831,6 +2033,7 @@ async function joinOrCreateRoom(isCreate = false) {
     return;
   }
 
+  hideInviteBanner();
   showJoinView(false);
   listenToRoom(roomCode);
 }
@@ -1855,54 +2058,190 @@ let __heartbeatTimer = null;
 
 function setupPresence(roomCode) {
   __presenceRoom = roomCode;
+  const playerRef = ref(db, `rooms/${roomCode}/players/${currentPlayerId}`);
   const connRef = ref(db, `rooms/${roomCode}/players/${currentPlayerId}/connected`);
   const seenRef = ref(db, `rooms/${roomCode}/players/${currentPlayerId}/lastSeen`);
+  const discAtRef = ref(db, `rooms/${roomCode}/players/${currentPlayerId}/disconnectedAt`);
+  const deadlineRef = ref(db, `rooms/${roomCode}/players/${currentPlayerId}/leaveDeadline`);
 
-  // Beim Verbindungsverlust automatisch als offline markieren.
+  // Beim Verbindungsverlust: connected=false, disconnectedAt setzen.
+  // leaveDeadline kann RTDB nicht direkt mit „jetzt + 2 min" setzen – also nutzen wir einen
+  // genügend großen Marker (Date.now()+LEAVE_GRACE_MS) clientseitig kurz vorm Disconnect.
   try {
     onDisconnect(connRef).set(false).catch(() => {});
     onDisconnect(seenRef).set(serverTimestamp()).catch(() => {});
+    onDisconnect(discAtRef).set(serverTimestamp()).catch(() => {});
+    onDisconnect(deadlineRef).set(Date.now() + LEAVE_GRACE_MS + 60_000).catch(() => {});
   } catch (e) {
     console.warn("onDisconnect nicht verfügbar:", e?.message);
   }
 
-  // Direkt jetzt als online markieren – falls Eintrag existiert.
-  update(ref(db, `rooms/${roomCode}/players/${currentPlayerId}`), {
+  // Direkt jetzt als online markieren und etwaige frühere Disconnect-Marker entfernen.
+  update(playerRef, {
     connected: true,
-    lastSeen: serverTimestamp()
+    lastSeen: serverTimestamp(),
+    disconnectedAt: null,
+    leaveDeadline: null
   }).catch(() => {});
 
   // Heartbeat alle 15 Sekunden.
   if (__heartbeatTimer) clearInterval(__heartbeatTimer);
   __heartbeatTimer = setInterval(() => {
     if (__presenceRoom !== roomCode) return;
-    update(ref(db, `rooms/${roomCode}/players/${currentPlayerId}`), {
+    update(playerRef, {
       lastSeen: serverTimestamp(),
       connected: true
     }).catch(() => {});
   }, 15000);
+
+  // Host startet den Grace-Sweep für abgelaufene Plätze.
+  startGraceSweep();
+  // Countdown-Tick für alle Clients, damit das Rejoin-Badge tickt.
+  startCountdownTick();
 }
 
 function teardownPresence() {
   if (__heartbeatTimer) { clearInterval(__heartbeatTimer); __heartbeatTimer = null; }
   __presenceRoom = null;
+  stopGraceSweep();
+  stopCountdownTick();
 }
 
 // Heuristik: ein Spieler gilt als offline, wenn `connected === false`
-// ODER `lastSeen` älter als 45 s ist (Heartbeat-Aussetzer).
+// ODER `lastSeen` älter als 45 s ist (Heartbeat-Aussetzer),
+// ODER explizit ein disconnectedAt gesetzt ist (Rejoin-Frist läuft).
 function isPlayerOffline(player) {
   if (!player) return false;
   if (player.isBot) return false;
   if (player.connected === false) return true;
+  if (typeof player.disconnectedAt === "number" && player.disconnectedAt > 0) return true;
   const seen = typeof player.lastSeen === "number" ? player.lastSeen : 0;
   if (seen && Date.now() - seen > 45000) return true;
   return false;
 }
 
+// Wie viele Sekunden bleiben noch, bis der Platz endgültig freigegeben wird?
+// Liefert null, wenn keine Frist läuft.
+function graceSecondsLeft(player) {
+  if (!player) return null;
+  if (player.isBot) return null;
+  const dl = typeof player.leaveDeadline === "number" ? player.leaveDeadline : 0;
+  if (!dl) return null;
+  const left = Math.max(0, dl - Date.now());
+  return Math.ceil(left / 1000);
+}
+
+// Helfer: Setzt einen Spieler in den ‚kurz weg'-Zustand (Rejoin-Frist startet).
+function markPlayerDisconnected(room, playerId) {
+  if (!room?.players?.[playerId]) return;
+  const p = room.players[playerId];
+  if (p.isBot) return;
+  p.connected = false;
+  p.disconnectedAt = Date.now();
+  p.leaveDeadline = Date.now() + LEAVE_GRACE_MS;
+}
+
+// Hilfsfunktion: alle Spieler, deren Rejoin-Frist abgelaufen ist, jetzt entfernen.
+// Wird vom Host periodisch aufgerufen, sodass nicht alle Clients konkurrieren.
+function sweepExpiredPlayers(room) {
+  if (!room || !room.players) return false;
+  const now = Date.now();
+  let changed = false;
+  const toRemove = [];
+  for (const id of Object.keys(room.players)) {
+    const p = room.players[id];
+    if (!p || p.isBot) continue;
+    const dl = typeof p.leaveDeadline === "number" ? p.leaveDeadline : 0;
+    if (dl && dl <= now) {
+      toRemove.push(id);
+    }
+  }
+  if (!toRemove.length) return false;
+
+  for (const id of toRemove) {
+    delete room.players[id];
+    if (Array.isArray(room.order)) room.order = room.order.filter(x => x !== id);
+    if (room.hands && room.hands[id]) delete room.hands[id];
+    if (room.bids && room.bids[id] !== undefined) delete room.bids[id];
+    if (room.tricksTaken && room.tricksTaken[id] !== undefined) delete room.tricksTaken[id];
+    if (room.cloudTricks && room.cloudTricks[id] !== undefined) delete room.cloudTricks[id];
+    if (room.cloudAdjust && room.cloudAdjust[id] !== undefined) delete room.cloudAdjust[id];
+    if (Array.isArray(room.cloudAdjustTargets)) {
+      room.cloudAdjustTargets = room.cloudAdjustTargets.filter(x => x !== id);
+    }
+    if (room.pass && room.pass[id] !== undefined) delete room.pass[id];
+    if (room.hostId === id) {
+      const rest = (room.order || []).filter(x => !x.startsWith("bot_"));
+      room.hostId = rest[0] || (room.order || [])[0] || null;
+    }
+    changed = true;
+  }
+  if (changed) {
+    if (Array.isArray(room.order)) {
+      if (typeof room.turnIndex === "number" && room.turnIndex >= room.order.length) room.turnIndex = 0;
+      if (typeof room.dealerIndex === "number" && room.dealerIndex >= room.order.length) room.dealerIndex = 0;
+      if (typeof room.bidStartIndex === "number" && room.bidStartIndex >= room.order.length) room.bidStartIndex = 0;
+    }
+    room.message = `Ein Spieler ist nicht zurückgekommen – Platz freigegeben.`;
+  }
+  return changed;
+}
+
+// Periodischer Sweep: nur Host triggert das, damit nicht alle Clients schreiben.
+let __sweepTimer = null;
+function startGraceSweep() {
+  if (__sweepTimer) clearInterval(__sweepTimer);
+  __sweepTimer = setInterval(async () => {
+    if (!currentRoomCode || !roomCache) return;
+    if (roomCache.hostId !== currentPlayerId) return;
+    // Nur sweepen, wenn tatsächlich eine Frist abgelaufen ist.
+    const expired = Object.values(roomCache.players || {}).some(p => {
+      if (!p || p.isBot) return false;
+      return typeof p.leaveDeadline === "number" && p.leaveDeadline > 0 && p.leaveDeadline <= Date.now();
+    });
+    if (!expired) return;
+    try {
+      await runTransaction(roomRef(currentRoomCode), room => {
+        if (!room) return room;
+        sweepExpiredPlayers(room);
+        return room;
+      });
+    } catch (e) {
+      console.warn("Sweep fehlgeschlagen:", e?.message);
+    }
+  }, 10000);
+}
+function stopGraceSweep() {
+  if (__sweepTimer) { clearInterval(__sweepTimer); __sweepTimer = null; }
+}
+
+// Spielerliste alle 5 s neu zeichnen, solange jemand in der Rejoin-Frist ist,
+// damit das Countdown-Badge live tickt (auch ohne neue Firebase-Events).
+let __countdownTickTimer = null;
+function startCountdownTick() {
+  if (__countdownTickTimer) return;
+  __countdownTickTimer = setInterval(() => {
+    if (!roomCache || !roomCache.players) return;
+    const anyPending = Object.values(roomCache.players).some(p =>
+      p && !p.isBot && typeof p.leaveDeadline === "number" && p.leaveDeadline > Date.now()
+    );
+    if (!anyPending) return;
+    try { renderRoom(roomCache); } catch (e) {}
+  }, 5000);
+}
+function stopCountdownTick() {
+  if (__countdownTickTimer) { clearInterval(__countdownTickTimer); __countdownTickTimer = null; }
+}
+
 async function leaveRoom() {
   if (!currentRoomCode) return;
-  
-  const leaveConfirm = confirm("Möchtest du den Raum wirklich verlassen?");
+
+  // Im laufenden Spiel: freundlicher Hinweis, dass der Platz 2 Minuten reserviert bleibt.
+  const inGame = !!roomCache && roomCache.phase !== "lobby" && roomCache.phase !== "finished";
+  const confirmMsg = inGame
+    ? "Möchtest du den Raum wirklich verlassen?\n\nDein Platz bleibt 2 Minuten reserviert – du kannst mit demselben Gerät/Browser einfach wieder reinkommen."
+    : "Möchtest du den Raum wirklich verlassen?";
+  const leaveConfirm = confirm(confirmMsg);
   if (!leaveConfirm) return;
 
   const roomReference = roomRef(currentRoomCode);
@@ -1917,40 +2256,60 @@ async function leaveRoom() {
     await runTransaction(roomReference, room => {
       if (!room) return room;
 
-      if (room.players && room.players[currentPlayerId]) {
-        delete room.players[currentPlayerId];
-      }
-      if (Array.isArray(room.order)) {
-        room.order = room.order.filter(id => id !== currentPlayerId);
-      }
-      if (room.hands && room.hands[currentPlayerId]) {
-        delete room.hands[currentPlayerId];
-      }
-      if (room.bids && room.bids[currentPlayerId] !== undefined) {
-        delete room.bids[currentPlayerId];
-      }
-      if (room.tricksTaken && room.tricksTaken[currentPlayerId] !== undefined) {
-        delete room.tricksTaken[currentPlayerId];
+      const isLobby = room.phase === "lobby" || room.phase === "finished";
+
+      if (isLobby) {
+        // In der Lobby (oder nach Spielende): wie bisher endgültig entfernen.
+        if (room.players && room.players[currentPlayerId]) {
+          delete room.players[currentPlayerId];
+        }
+        if (Array.isArray(room.order)) {
+          room.order = room.order.filter(id => id !== currentPlayerId);
+        }
+        if (room.hands && room.hands[currentPlayerId]) delete room.hands[currentPlayerId];
+        if (room.bids && room.bids[currentPlayerId] !== undefined) delete room.bids[currentPlayerId];
+        if (room.tricksTaken && room.tricksTaken[currentPlayerId] !== undefined) delete room.tricksTaken[currentPlayerId];
+
+        if (room.hostId === currentPlayerId) {
+          const remainingPlayers = room.order ? room.order.filter(id => !id.startsWith("bot_")) : [];
+          if (remainingPlayers.length > 0) {
+            room.hostId = remainingPlayers[0];
+            room.message = `Der bisherige Host hat den Raum verlassen. Neuer Host ist ${room.players[room.hostId]?.name || "Spieler"}.`;
+          } else {
+            return null;
+          }
+        } else {
+          room.message = `${currentName || "Ein Spieler"} hat den Raum verlassen.`;
+        }
+        if (room.order && room.order.length > 0) {
+          if (room.turnIndex >= room.order.length) room.turnIndex = 0;
+          if (room.dealerIndex >= room.order.length) room.dealerIndex = 0;
+          if (room.bidStartIndex >= room.order.length) room.bidStartIndex = 0;
+        }
+        return room;
       }
 
+      // Mid-game: Spieler bleibt im Raum mit Rejoin-Frist.
+      markPlayerDisconnected(room, currentPlayerId);
+
+      // Host übergeben, damit das Spiel nicht einfriert.
       if (room.hostId === currentPlayerId) {
-        const remainingPlayers = room.order ? room.order.filter(id => !id.startsWith("bot_")) : [];
-        if (remainingPlayers.length > 0) {
-          room.hostId = remainingPlayers[0];
-          room.message = `Der bisherige Host hat den Raum verlassen. Neuer Host ist ${room.players[room.hostId]?.name || "Spieler"}.`;
+        const onlineHumans = (room.order || [])
+          .filter(id => id !== currentPlayerId)
+          .filter(id => !id.startsWith("bot_"))
+          .filter(id => !isPlayerOffline(room.players?.[id]));
+        const fallbackHuman = (room.order || [])
+          .filter(id => id !== currentPlayerId && !id.startsWith("bot_"));
+        const newHost = onlineHumans[0] || fallbackHuman[0] || null;
+        if (newHost) {
+          room.hostId = newHost;
+          room.message = `${currentName || "Host"} ist kurz weg – neuer Host: ${room.players[newHost]?.name || "Spieler"}.`;
         } else {
-          return null;
+          room.message = `${currentName || "Host"} ist kurz weg. Platz bleibt 2 Min reserviert.`;
         }
       } else {
-        room.message = `${currentName || "Ein Spieler"} hat den Raum verlassen.`;
+        room.message = `${currentName || "Ein Spieler"} ist kurz weg – Platz bleibt 2 Min reserviert.`;
       }
-
-      if (room.phase !== "lobby" && room.order && room.order.length > 0) {
-        if (room.turnIndex >= room.order.length) room.turnIndex = 0;
-        if (room.dealerIndex >= room.order.length) room.dealerIndex = 0;
-        if (room.bidStartIndex >= room.order.length) room.bidStartIndex = 0;
-      }
-
       return room;
     });
   } catch (e) {
@@ -1978,6 +2337,19 @@ async function startGame() {
 
 async function resetToLobby() {
   if (!roomCache || roomCache.hostId !== currentPlayerId) return;
+
+  // Feature 4: Sicherheitsabfrage, wenn mitten in einer Runde zurückgesetzt wird.
+  const inGame = roomCache.phase !== "lobby" && roomCache.phase !== "finished";
+  if (inGame) {
+    const ok = await askConfirm({
+      title: "Runde zurücksetzen?",
+      message: "Möchtest du wirklich die laufende Runde zurücksetzen? Punkte, Hände und Stiche gehen verloren.",
+      okText: "Ja, zurücksetzen",
+      cancelText: "Abbrechen"
+    });
+    if (!ok) return;
+  }
+
   const roomReference = roomRef(currentRoomCode);
   await runTransaction(roomReference, room => {
     if (!room) return room;
@@ -2735,16 +3107,66 @@ document.getElementById("shareQrToggleBtn")?.addEventListener("click", () => {
 els.roomInput.value = normalizeRoomCode(new URLSearchParams(location.search).get("room") || localStorage.getItem(LOCAL.roomCode) || "");
 maybeFillLocalRoomCode();
 
-const savedRoom = normalizeRoomCode(new URLSearchParams(location.search).get("room") || localStorage.getItem(LOCAL.roomCode) || "");
-if (savedRoom) {
-  currentRoomCode = savedRoom;
-  currentName = currentName || "Spieler";
-  if (els.nameInput.value) currentName = els.nameInput.value;
-  showJoinView(false);
-  listenToRoom(savedRoom);
-} else {
-  fetchGlobalLeaderboard();
+// Feature 3: Beim Aufruf mit ?room=CODE darf nicht stillschweigend als Spectator gejoined werden.
+// Wir trennen drei Fälle:
+//   a) Reconnect (gleicher playerId ist im Raum bekannt) → direkt wieder rein.
+//   b) Name lokal gespeichert (aber playerId unbekannt) → Code vorausfüllen, im Join-View bleiben, Banner anzeigen.
+//   c) Kein Name vorhanden → wie b), zusätzlich Namensfeld fokussieren.
+// Der Auto-Join via localStorage (kein URL-Parameter) funktioniert wie bisher (Reconnect-Pfad).
+const urlRoom = normalizeRoomCode(new URLSearchParams(location.search).get("room") || "");
+const storedRoom = normalizeRoomCode(localStorage.getItem(LOCAL.roomCode) || "");
+const savedRoom = urlRoom || storedRoom;
+const fromUrl = !!urlRoom;
+
+async function isExistingPlayerInRoom(code, playerId) {
+  if (!code || !playerId) return false;
+  try {
+    const snap = await get(ref(db, `rooms/${code}/players/${playerId}`));
+    return snap.exists();
+  } catch (e) {
+    return false;
+  }
 }
+
+async function handleInitialEntry() {
+  if (!savedRoom) {
+    fetchGlobalLeaderboard();
+    subscribeActiveRooms();
+    return;
+  }
+  els.roomInput.value = savedRoom;
+  const hasName = !!(els.nameInput.value || localStorage.getItem(LOCAL.playerName));
+  const alreadyKnown = await isExistingPlayerInRoom(savedRoom, currentPlayerId);
+
+  // Reconnect-Pfad: bereits bekannt im Raum → direkt rein (egal ob Spiel läuft).
+  // Bei vom Nutzer eingegebenem URL-Parameter brauchen wir aber einen Namen.
+  if (alreadyKnown) {
+    currentRoomCode = savedRoom;
+    currentName = currentName || els.nameInput.value || localStorage.getItem(LOCAL.playerName) || "Spieler";
+    showJoinView(false);
+    listenToRoom(savedRoom);
+    return;
+  }
+
+  // Aus localStorage gemerkter Raum, der inzwischen nicht mehr existiert / Spieler nicht mehr drin.
+  // Wenn das ein „echter“ Einladungslink (?room=) war: Banner + Namensdialog.
+  if (fromUrl) {
+    showInviteBanner(savedRoom);
+    fetchGlobalLeaderboard();
+    subscribeActiveRooms();
+    if (!hasName) {
+      els.nameInput.focus();
+    }
+    return;
+  }
+
+  // Stiller Reconnect-Versuch via localStorage funktioniert nicht (Spieler nicht im Raum).
+  // Gespeicherte Raumcode löschen, normale Join-Ansicht zeigen.
+  localStorage.removeItem(LOCAL.roomCode);
+  fetchGlobalLeaderboard();
+  subscribeActiveRooms();
+}
+handleInitialEntry();
 
 window.addEventListener("beforeunload", () => {
   if (currentRoomCode) localStorage.setItem(LOCAL.roomCode, currentRoomCode);
