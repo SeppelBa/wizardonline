@@ -29,6 +29,29 @@ const SUITS = [
   { key: "diamonds", label: "Karo", short: "♦", css: "yellow" },
 ];
 const SUIT_BY_KEY = Object.fromEntries(SUITS.map(s => [s.key, s]));
+
+// Detaillierte Beschreibung eines Firebase-Fehlers fuer Alerts und Logs.
+// Zeigt Operation, Code und Message — und gibt Hinweise fuer typische Faelle
+// (z. B. PERMISSION_DENIED nach Regel-Anpassungen).
+function describeFirebaseError(error, operation) {
+  const op = operation ? String(operation) : "unbekannt";
+  const code = error && (error.code || error.name) ? String(error.code || error.name) : "";
+  const msg  = error && error.message ? String(error.message) : String(error || "Unbekannter Fehler");
+  let hint = "";
+  const allText = (code + " " + msg).toLowerCase();
+  if (allText.includes("permission_denied") || allText.includes("permission denied")) {
+    hint = "\n\nHinweis: Firebase Realtime Database Rules blockieren den Schreibvorgang. Pruefe database.rules.json (Cache evtl. <60 s alt) und stelle sicher, dass die neuesten Rules in Firebase publiziert sind.";
+  } else if (allText.includes("network") || allText.includes("unavailable") || allText.includes("offline")) {
+    hint = "\n\nHinweis: Netzwerk- oder Verbindungsproblem. Pruefe Internet/WLAN und versuche es erneut.";
+  } else if (allText.includes("first argument contains") || allText.includes("contains undefined") || allText.includes("invalid key")) {
+    hint = "\n\nHinweis: Ungueltige Daten (undefined oder verbotenes Zeichen) im Schreibvorgang. Bitte Spielstand neu laden.";
+  }
+  try { console.error("[Firebase Fehler]", op, { code, message: msg, error }); } catch (e) {}
+  return `KRITISCHER FIREBASE FEHLER bei Operation "${op}"` +
+         (code ? `\nCode: ${code}` : "") +
+         `\nMeldung: ${msg}` +
+         hint;
+}
 const BOT_NAMES = ["Merlin", "Gandalf", "Morgana", "HexerBot", "Rumpel", "Zaubix", "Arcana", "Fawkes", "Nexus", "Eldrin"];
 
 // Bekannte Sonderkarten in fester Reihenfolge (für UI und Deck).
@@ -2434,7 +2457,7 @@ async function pauseGame() {
     });
     showToast("⏸ Spiel pausiert");
   } catch (e) {
-    console.error("Pausieren fehlgeschlagen:", e);
+    alert(describeFirebaseError(e, "pauseGame (runTransaction auf rooms/" + currentRoomCode + ")"));
   }
 }
 
@@ -2466,7 +2489,7 @@ async function resumeGame() {
     });
     showToast("▶️ Spiel fortgesetzt");
   } catch (e) {
-    console.error("Fortsetzen fehlgeschlagen:", e);
+    alert(describeFirebaseError(e, "resumeGame (runTransaction auf rooms/" + currentRoomCode + ")"));
   }
 }
 
@@ -2649,7 +2672,7 @@ async function sendBid() {
     currentSelectedBid = 0;
 
   } catch (error) {
-    alert("KRITISCHER FIREBASE FEHLER: " + error.message);
+    alert(describeFirebaseError(error, "sendBid (runTransaction auf rooms/" + currentRoomCode + ")"));
   }
 }
 
