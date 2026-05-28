@@ -1,4 +1,4 @@
-const CACHE = "wizard-online-v6";
+const CACHE = "wizard-online-v4";
 const ASSETS = ["./","./index.html","./style.css","./app.js","./manifest.json","./icon.png"];
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));

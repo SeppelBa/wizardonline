@@ -4,7 +4,6 @@
     ".write": false,
 
     "rooms": {
-      ".read": true,
       "$roomCode": {
         ".read": true,
         ".write": "$roomCode.matches(/^[A-Z0-9]{4,8}$/)",
@@ -12,18 +11,13 @@
         "phase": {
           ".validate": "newData.isString() && newData.val().matches(/^(lobby|bidding|playing|choose_trump|round_summary|finished|passing_cards|cloud_adjust)$/)"
         },
-        "roundNo":     { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100" },
-        "maxRound":    { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100" },
-        "createdAt":   { ".validate": "newData.isNumber() && newData.val() >= 0" },
-        "updatedAt":   { ".validate": "newData.isNumber() && newData.val() >= 0" },
-        "listedAt":    { ".validate": "newData.isNumber() && newData.val() >= 0" },
+        "roundNo":     { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 30" },
+        "maxRound":    { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 30" },
+        "createdAt":   { ".validate": "newData.isNumber()" },
         "hostId":      { ".validate": "newData.isString() && newData.val().length <= 64" },
         "anniversaryMode": { ".validate": "newData.isBoolean()" },
         "strictBidRule":   { ".validate": "newData.isBoolean()" },
         "fastMode":        { ".validate": "newData.isBoolean()" },
-        "paused":          { ".validate": "newData.isBoolean()" },
-        "pausedAt":        { ".validate": "newData.isNumber() && newData.val() >= 0" },
-        "pausedBy":        { ".validate": "newData.isString() && newData.val().length <= 64" },
         "specials": {
           "$specialKey": {
             ".validate": "newData.isBoolean() && $specialKey.matches(/^(dragon|pixie|bomb|werewolf|shapeshifter|juggler|cloud)$/)"
@@ -31,24 +25,11 @@
         },
         "players": {
           "$playerId": {
-            "id":              { ".validate": "newData.isString() && newData.val().length <= 64" },
-            "name":            { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 30" },
-            "score":           { ".validate": "newData.isNumber() && newData.val() >= -1000000 && newData.val() <= 1000000" },
-            "isBot":           { ".validate": "newData.isBoolean()" },
-            "seat":            { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 16" },
-            "connected":       { ".validate": "newData.isBoolean()" },
-            "lastSeen":        { ".validate": "newData.isNumber() && newData.val() >= 0" },
-            "disconnectedAt":  { ".validate": "newData.isNumber() && newData.val() >= 0" },
-            "leaveDeadline":   { ".validate": "newData.isNumber() && newData.val() >= 0" },
-            "$other": { ".validate": true }
-          }
-        },
-        "spectators": {
-          "$spectatorId": {
-            "name":     { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 30" },
-            "id":       { ".validate": "newData.isString() && newData.val().length <= 64" },
-            "joinedAt": { ".validate": "newData.isNumber() && newData.val() >= 0" },
-            "$other": { ".validate": true }
+            "name":      { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 20" },
+            "score":     { ".validate": "newData.isNumber() && newData.val() >= -10000 && newData.val() <= 10000" },
+            "isBot":     { ".validate": "newData.isBoolean()" },
+            "connected": { ".validate": "newData.isBoolean()" },
+            "lastSeen":  { ".validate": "newData.isNumber() && newData.val() >= 0" }
           }
         },
         "$other": { ".validate": true }
@@ -60,10 +41,10 @@
       "$playerName": {
         ".write": "$playerName.matches(/^[^.#$\\[\\]]{1,30}$/)",
         ".validate": "newData.hasChildren(['wins','gamesPlayed','maxScore','totalScore'])",
-        "wins":        { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1000000" },
-        "gamesPlayed": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1000000" },
-        "maxScore":    { ".validate": "newData.isNumber() && newData.val() >= -1000000 && newData.val() <= 1000000" },
-        "totalScore":  { ".validate": "newData.isNumber() && newData.val() >= -1000000000 && newData.val() <= 1000000000" },
+        "wins":        { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100000" },
+        "gamesPlayed": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100000" },
+        "maxScore":    { ".validate": "newData.isNumber() && newData.val() >= -10000 && newData.val() <= 10000" },
+        "totalScore":  { ".validate": "newData.isNumber() && newData.val() >= -10000000 && newData.val() <= 10000000" },
         "$other": { ".validate": false }
       }
     }

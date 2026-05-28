@@ -105,23 +105,6 @@
         </button>
       </div>
 
-      <div id="inviteBanner" class="inviteBanner hidden">
-        <div class="inviteBannerInner">
-          <strong>Einladung erhalten</strong>
-          <p>
-            Du wurdest in Raum <span id="inviteBannerCode">—</span> eingeladen. Trage oben deinen Namen ein und tippe auf <em>Raum betreten</em>.
-          </p>
-        </div>
-      </div>
-
-      <div id="activeRoomsBox" class="activeRoomsBox hidden">
-        <div class="activeRoomsHead">
-          <h3>🟢 Aktive Räume</h3>
-          <span>tippen zum Übernehmen</span>
-        </div>
-        <div id="activeRoomsList" class="activeRoomsList"></div>
-      </div>
-
       <p class="hint center">
         2–6 Spieler • Raumcode teilen • Direkt losspielen
       </p>
@@ -205,27 +188,12 @@
             </button>
 
             <button
-              id="pauseBtn"
-              class="secondary hidden"
-              type="button"
-            >
-              ⏸ Spiel pausieren
-            </button>
-
-            <button
               id="resetBtn"
               class="danger"
             >
               Lobby
             </button>
 
-          </div>
-
-          <div id="pauseBanner" class="pauseBanner hidden" role="status" aria-live="polite">
-            <strong>⏸ Spiel ist pausiert</strong>
-            <p id="pauseBannerText">
-              Plätze bleiben dauerhaft reserviert. Komm später über denselben Raumcode oder Link einfach wieder rein.
-            </p>
           </div>
 
         </section>
@@ -575,18 +543,6 @@
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
         <button onclick="confirmCloudAdjust(-1)" class="secondary" style="font-size: 1.2rem;">▼ -1</button>
         <button onclick="confirmCloudAdjust(1)" style="font-size: 1.2rem;">+1 ▲</button>
-      </div>
-    </div>
-  </div>
-
-  <div id="confirmOverlay" class="roundOverlay hidden" style="z-index: 300;">
-    <div class="roundOverlayCard" style="max-width: 360px; text-align: center;">
-      <div class="overlayGlow" style="background: #8b5cf6;"></div>
-      <h2 id="confirmTitle" style="margin-bottom: 10px;">Bestätigen</h2>
-      <p id="confirmMessage" style="color: var(--muted); margin-bottom: 20px;">Bist du sicher?</p>
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-        <button id="confirmCancelBtn" class="ghost" style="font-size: 1rem;">Abbrechen</button>
-        <button id="confirmOkBtn" class="danger" style="font-size: 1rem;">Bestätigen</button>
       </div>
     </div>
   </div>

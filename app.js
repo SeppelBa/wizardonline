@@ -18,28 +18,6 @@ const db = getDatabase(app);
 
 const MAX_PLAYERS = 6;
 const MIN_PLAYERS = 2; 
-// Wie lange ein Spielerplatz nach Disconnect/Leave noch reserviert bleibt (mid-game).
-const LEAVE_GRACE_MS = 2 * 60 * 1000; // 2 Minuten
-// Wie alt darf ein Raum maximal sein, damit er in der „Aktive Räume"-Liste auftaucht.
-const ACTIVE_ROOM_MAX_AGE_MS = 6 * 60 * 60 * 1000; // 6 h
-
-// ============================================================
-// Auto-Cleanup (opportunistisch, clientseitig, kein Server).
-// Räume werden ohne Cloud Function aufgeräumt: jeder verbundene Client
-// löscht stale/leere/beendete Räume, wenn die Regeln dafür erfüllt sind.
-// ============================================================
-// Stale: keine Aktivität seit 24h -> löschen (nicht während Pause).
-const ROOM_STALE_MS = 24 * 60 * 60 * 1000;
-// Schonfrist nach Spielende, damit der Gewinner-Screen kurz sichtbar bleibt.
-// Nach Ablauf werden beendete Räume gelöscht (außer pausiert).
-const FINISHED_ROOM_GRACE_MS = 30 * 60 * 1000; // 30 Minuten
-// Leerer Raum (Lobby ohne Spieler): nach kurzer Schonfrist löschen, damit
-// kurze Reconnect-Lücken nicht versehentlich den Raum killen.
-const EMPTY_LOBBY_GRACE_MS = 60 * 1000; // 60 Sekunden
-// Damit nicht jeder Snapshot dieselben Räume gleichzeitig zu löschen versucht,
-// merken wir uns lokale Lösch-Versuche kurz, um Spam zu vermeiden.
-const CLEANUP_ATTEMPT_COOLDOWN_MS = 60 * 1000;
-const __cleanupAttempts = new Map(); // code -> lastAttempt timestamp
 const SUITS = [
   { key: "hearts", label: "Herz", short: "♥", css: "red" },
   { key: "spades", label: "Pik", short: "♠", css: "black" },
@@ -47,29 +25,6 @@ const SUITS = [
   { key: "diamonds", label: "Karo", short: "♦", css: "yellow" },
 ];
 const SUIT_BY_KEY = Object.fromEntries(SUITS.map(s => [s.key, s]));
-
-// Detaillierte Beschreibung eines Firebase-Fehlers fuer Alerts und Logs.
-// Zeigt Operation, Code und Message — und gibt Hinweise fuer typische Faelle
-// (z. B. PERMISSION_DENIED nach Regel-Anpassungen).
-function describeFirebaseError(error, operation) {
-  const op = operation ? String(operation) : "unbekannt";
-  const code = error && (error.code || error.name) ? String(error.code || error.name) : "";
-  const msg  = error && error.message ? String(error.message) : String(error || "Unbekannter Fehler");
-  let hint = "";
-  const allText = (code + " " + msg).toLowerCase();
-  if (allText.includes("permission_denied") || allText.includes("permission denied")) {
-    hint = "\n\nHinweis: Firebase Realtime Database Rules blockieren den Schreibvorgang. Pruefe database.rules.json (Cache evtl. <60 s alt) und stelle sicher, dass die neuesten Rules in Firebase publiziert sind.";
-  } else if (allText.includes("network") || allText.includes("unavailable") || allText.includes("offline")) {
-    hint = "\n\nHinweis: Netzwerk- oder Verbindungsproblem. Pruefe Internet/WLAN und versuche es erneut.";
-  } else if (allText.includes("first argument contains") || allText.includes("contains undefined") || allText.includes("invalid key")) {
-    hint = "\n\nHinweis: Ungueltige Daten (undefined oder verbotenes Zeichen) im Schreibvorgang. Bitte Spielstand neu laden.";
-  }
-  try { console.error("[Firebase Fehler]", op, { code, message: msg, error }); } catch (e) {}
-  return `KRITISCHER FIREBASE FEHLER bei Operation "${op}"` +
-         (code ? `\nCode: ${code}` : "") +
-         `\nMeldung: ${msg}` +
-         hint;
-}
 const BOT_NAMES = ["Merlin", "Gandalf", "Morgana", "HexerBot", "Rumpel", "Zaubix", "Arcana", "Fawkes", "Nexus", "Eldrin"];
 
 // Bekannte Sonderkarten in fester Reihenfolge (für UI und Deck).
@@ -154,25 +109,8 @@ const els = {
   closeSettingsBtn: document.getElementById("closeSettingsBtn"),
   statsOverlay: document.getElementById("statsOverlay"),
   closeStatsBtn: document.getElementById("closeStatsBtn"),
-  statsContent: document.getElementById("statsContent"),
-  activeRoomsBox: document.getElementById("activeRoomsBox"),
-  activeRoomsList: document.getElementById("activeRoomsList"),
-  inviteBanner: document.getElementById("inviteBanner"),
-  inviteBannerCode: document.getElementById("inviteBannerCode"),
-  confirmOverlay: document.getElementById("confirmOverlay"),
-  confirmTitle: document.getElementById("confirmTitle"),
-  confirmMessage: document.getElementById("confirmMessage"),
-  confirmOkBtn: document.getElementById("confirmOkBtn"),
-  confirmCancelBtn: document.getElementById("confirmCancelBtn"),
-  pauseBtn: document.getElementById("pauseBtn"),
-  pauseBanner: document.getElementById("pauseBanner"),
-  pauseBannerText: document.getElementById("pauseBannerText")
+  statsContent: document.getElementById("statsContent")
 };
-
-// Hilfsfunktion: ist der Raum gerade pausiert?
-function isRoomPaused(state) {
-  return !!(state && state.paused === true);
-}
 
 const LOCAL = {
   playerId: "wizard.playerId",
@@ -859,349 +797,8 @@ function showJoinView(show) {
   els.settingsBtn?.classList.toggle("hidden", show);
   if (show) {
     fetchGlobalLeaderboard();
-    subscribeActiveRooms();
-  } else {
-    unsubscribeActiveRooms();
   }
 }
-
-// ============================================================
-// Feature 2: Aktive Räume auf der Join-Seite live anzeigen.
-// ============================================================
-let __activeRoomsUnsub = null;
-function subscribeActiveRooms() {
-  if (__activeRoomsUnsub) return;
-  const roomsRef = ref(db, "rooms");
-  // Sofort einen leeren Zustand zeichnen, damit die Box auf der Join-Seite
-  // garantiert sichtbar ist – auch falls der erste Snapshot lange dauert.
-  try { renderActiveRooms({}); } catch (e) {}
-  __activeRoomsUnsub = onValue(roomsRef, snap => {
-    const data = snap.val() || {};
-    // Opportunistisches Cleanup: stale/empty/finished Räume entfernen,
-    // unabhängig davon, ob die Join-Ansicht gerade sichtbar ist (mit
-    // Cooldown pro Raumcode, damit nicht jeder Client gleichzeitig schreibt).
-    try { sweepRoomsForCleanup(data); } catch (e) { console.warn("sweep failed", e); }
-    if (els.joinView.classList.contains("hidden")) return;
-    renderActiveRooms(data);
-  }, (err) => {
-    // Wenn die RTDB-Regeln globales Lesen unter /rooms nicht erlauben,
-    // landen wir hier (PERMISSION_DENIED). In diesem Fall zeigen wir der
-    // Nutzerin einen kurzen Hinweis statt einer leeren Box.
-    console.warn("Aktive Räume konnten nicht geladen werden:", err?.message);
-    const list = els.activeRoomsList;
-    if (els.activeRoomsBox && list) {
-      els.activeRoomsBox.classList.remove("hidden");
-      list.innerHTML = "";
-      const note = document.createElement("div");
-      note.className = "activeRoomsEmpty";
-      note.textContent = "Räume können nicht geladen werden. Prüfe die Firebase-Regeln („rooms“ muss lesbar sein).";
-      list.appendChild(note);
-    }
-  });
-}
-function unsubscribeActiveRooms() {
-  if (typeof __activeRoomsUnsub === "function") {
-    __activeRoomsUnsub();
-  }
-  __activeRoomsUnsub = null;
-}
-
-function phaseLabelShort(phase) {
-  switch (phase) {
-    case "lobby": return "Lobby";
-    case "choose_trump": return "Trumpfwahl";
-    case "bidding": return "Ansage";
-    case "playing": return "Läuft";
-    case "passing_cards": return "Tausch";
-    case "cloud_adjust": return "Wolke";
-    case "round_summary": return "Rundenende";
-    case "finished": return "Beendet";
-    default: return phase || "—";
-  }
-}
-
-// ============================================================
-// Cleanup-Helfer (opportunistisch).
-// Entscheidet je Raum, ob er vom Client gelöscht werden soll. Wir bevorzugen
-// die strengste Bedingung, die aus Nutzersicht sinnvoll ist:
-//   - pausierte Räume nie löschen,
-//   - leere Lobbys nach kurzer Schonfrist löschen,
-//   - beendete Räume nach FINISHED_ROOM_GRACE_MS löschen,
-//   - alles, was seit ROOM_STALE_MS keine Aktivität mehr hatte, löschen.
-// Läuft das mid-game (Phase nicht lobby/finished) und gibt es noch online-
-// reservierte Spieler oder eine aktive Rejoin-Frist, wird NICHT gelöscht.
-function roomFreshness(room) {
-  if (!room || typeof room !== "object") return 0;
-  const ts = [
-    typeof room.updatedAt === "number" ? room.updatedAt : 0,
-    typeof room.listedAt === "number" ? room.listedAt : 0,
-    typeof room.createdAt === "number" ? room.createdAt : 0
-  ];
-  return Math.max.apply(null, ts);
-}
-
-function roomHasFreshRejoinReservation(room, now) {
-  const players = room && room.players;
-  if (!players || typeof players !== "object") return false;
-  for (const id of Object.keys(players)) {
-    const p = players[id] || {};
-    // Bots zählen nicht als echte Reservierung.
-    if (p.isBot) continue;
-    // Online-Spieler -> Raum lebt.
-    if (p.connected === true) return true;
-    // Frische leaveDeadline (noch nicht abgelaufen) -> Platz reserviert.
-    if (typeof p.leaveDeadline === "number" && p.leaveDeadline > now) return true;
-  }
-  return false;
-}
-
-// Liefert einen Grund-String, wenn der Raum gelöscht werden soll, sonst null.
-function reasonToDeleteRoom(room, code, now) {
-  if (!room || typeof room !== "object") return null;
-  if (!/^[A-Z0-9]{4,8}$/.test(String(code || ""))) return null;
-  // Pausierte Räume sind heilig.
-  if (room.paused === true) return null;
-
-  const fresh = roomFreshness(room);
-  const age = fresh ? (now - fresh) : Infinity;
-  const players = (room.players && typeof room.players === "object") ? room.players : {};
-  const playerIds = Object.keys(players);
-  const humanIds = playerIds.filter(id => !(players[id] && players[id].isBot));
-  const phase = room.phase || "lobby";
-
-  // Leerer Raum (keine echten Spieler).
-  if (humanIds.length === 0) {
-    // Lobby/finished sofort nach kurzer Schonfrist löschen.
-    if (phase === "lobby" || phase === "finished") {
-      if (age > EMPTY_LOBBY_GRACE_MS) return "empty-lobby";
-    } else {
-      // Mid-game leer: erst nach LEAVE_GRACE_MS + Puffer entfernen, um
-      // ehrliche Rejoins nicht abzuwürgen. Wenn updatedAt sehr alt -> löschen.
-      if (age > Math.max(LEAVE_GRACE_MS, EMPTY_LOBBY_GRACE_MS) * 2) return "empty-mid-game";
-    }
-  }
-
-  // Beendete Räume nach Schonfrist löschen.
-  if (phase === "finished" && age > FINISHED_ROOM_GRACE_MS) return "finished-grace";
-
-  // Stale: 24h keine Aktivität.
-  if (age > ROOM_STALE_MS) {
-    // Im laufenden Spiel zusätzlich prüfen, dass keine frische Rejoin-
-    // Reservierung mehr offen ist; sonst lieber stehen lassen.
-    if (phase !== "lobby" && phase !== "finished") {
-      if (roomHasFreshRejoinReservation(room, now)) return null;
-    }
-    return "stale-24h";
-  }
-
-  return null;
-}
-
-// Soll der Raum in der „Aktive Räume"-Liste ausgeblendet werden?
-// Wir blenden alles aus, was wir löschen würden, plus klassische Filter
-// (finished, zu alt). Damit nervt es nicht, wenn das Löschen wegen
-// Permissions/Netz nicht sofort klappt.
-function shouldHideRoomInList(room, code, now) {
-  if (!room || typeof room !== "object") return true;
-  if (room.phase === "finished") return true;
-  const fresh = roomFreshness(room);
-  if (fresh && (now - fresh) > ACTIVE_ROOM_MAX_AGE_MS) return true;
-  if (reasonToDeleteRoom(room, code, now)) return true;
-  return false;
-}
-
-async function tryDeleteRoomIfStale(code, room) {
-  const now = Date.now();
-  const reason = reasonToDeleteRoom(room, code, now);
-  if (!reason) return false;
-  const last = __cleanupAttempts.get(code) || 0;
-  if (now - last < CLEANUP_ATTEMPT_COOLDOWN_MS) return false;
-  __cleanupAttempts.set(code, now);
-  try {
-    await set(roomRef(code), null);
-    console.info("[cleanup] Raum gelöscht:", code, "Grund:", reason);
-    return true;
-  } catch (e) {
-    // PERMISSION_DENIED bei strengen Regeln -> kein Drama, einfach loggen.
-    console.warn("[cleanup] Löschen fehlgeschlagen für", code, e?.code || e?.message || e);
-    return false;
-  }
-}
-
-// Läuft über alle bekannten Räume und versucht zu löschen, was offensichtlich
-// stale/leer/beendet ist. Wird opportunistisch beim Empfang der Raumliste
-// aufgerufen (also auf der Join-Seite) und beim eigenen Raum.
-function sweepRoomsForCleanup(roomsObj) {
-  if (!roomsObj || typeof roomsObj !== "object") return;
-  for (const code of Object.keys(roomsObj)) {
-    const room = roomsObj[code];
-    // Für den eigenen Raum entscheidet die Spielmechanik bzw. der Host-Button.
-    if (code === currentRoomCode) continue;
-    tryDeleteRoomIfStale(code, room);
-  }
-}
-
-function renderActiveRooms(roomsObj) {
-  const box = els.activeRoomsBox;
-  const list = els.activeRoomsList;
-  if (!box || !list) return;
-
-  // Liste ist auf der Join-Seite immer sichtbar (mit leerem Zustand statt versteckt).
-  // Das vermeidet, dass die Liste bei Edge-Cases (kurz keine Räume, fehlendes createdAt etc.)
-  // einfach verschwindet und die Nutzerin denkt, das Feature funktioniere nicht.
-  box.classList.remove("hidden");
-
-  const now = Date.now();
-  const rows = [];
-  if (roomsObj && typeof roomsObj === "object") {
-    for (const code of Object.keys(roomsObj)) {
-      const room = roomsObj[code];
-      if (!room || typeof room !== "object") continue;
-      // Raumcode muss zum erlaubten Schema passen (vermeidet Schrottdaten).
-      if (!/^[A-Z0-9]{4,8}$/.test(code)) continue;
-      const players = room.players && typeof room.players === "object" ? room.players : {};
-      const playerIdsArr = Object.keys(players);
-      // Fallback-Zeitstempel: createdAt > updatedAt > listedAt. Wenn nichts gesetzt ist,
-      // bleibt das Alter bei 0, sodass der Raum NICHT automatisch unsichtbar wird.
-      const tsCandidates = [
-        typeof room.createdAt === "number" ? room.createdAt : 0,
-        typeof room.updatedAt === "number" ? room.updatedAt : 0,
-        typeof room.listedAt === "number" ? room.listedAt : 0
-      ];
-      const ts = Math.max.apply(null, tsCandidates);
-      // Nur sehr alte Räume verbergen; wenn gar kein Zeitstempel da ist, NICHT filtern.
-      if (ts && now - ts > ACTIVE_ROOM_MAX_AGE_MS) continue;
-      // Endgültig beendete Räume sollen nicht in der Liste auftauchen.
-      if (room.phase === "finished") continue;
-      // Räume, die laut Cleanup-Regeln ohnehin verschwinden sollen (stale,
-      // leer ohne Pause etc.), nicht mehr anzeigen – auch wenn das eigentliche
-      // Löschen wegen Permissions/Netz noch nicht durchgegangen ist.
-      if (shouldHideRoomInList(room, code, now)) continue;
-      rows.push({
-        code,
-        phase: room.phase || "lobby",
-        paused: room.paused === true,
-        count: playerIdsArr.length,
-        max: MAX_PLAYERS,
-        ts
-      });
-    }
-  }
-
-  rows.sort((a, b) => {
-    // Lobby-Räume zuerst (die kann man am leichtesten betreten),
-    // dann nach Spielerzahl (größere Räume oben), dann nach Frische.
-    const al = a.phase === "lobby" ? 0 : 1;
-    const bl = b.phase === "lobby" ? 0 : 1;
-    if (al !== bl) return al - bl;
-    if (b.count !== a.count) return b.count - a.count;
-    return (b.ts || 0) - (a.ts || 0);
-  });
-
-  const display = rows.slice(0, 8);
-  list.innerHTML = "";
-
-  if (display.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "activeRoomsEmpty";
-    empty.textContent = "Noch keine aktiven Räume. Erstelle den ersten!";
-    list.appendChild(empty);
-    return;
-  }
-
-  for (const r of display) {
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = "activeRoomItem";
-    const phClass = r.paused
-      ? "paused"
-      : (r.phase === "lobby" ? "lobby" : (r.phase === "finished" ? "" : "playing"));
-    const phLabel = r.paused ? "⏸ Pause" : phaseLabelShort(r.phase);
-    item.innerHTML = `
-      <span class="code">${r.code}</span>
-      <span class="meta">
-        <span><strong>${r.count}</strong>/${r.max} Spieler</span>
-      </span>
-      <span class="phase ${phClass}">${phLabel}</span>
-    `;
-    item.addEventListener("click", () => onActiveRoomClick(r));
-    list.appendChild(item);
-  }
-}
-
-function onActiveRoomClick(row) {
-  if (!row || !row.code) return;
-  els.roomInput.value = row.code;
-  const name = (els.nameInput.value || localStorage.getItem(LOCAL.playerName) || "").trim();
-  if (!name) {
-    showInviteBanner(row.code);
-    els.nameInput.focus();
-    return;
-  }
-  hideInviteBanner();
-  joinOrCreateRoom(false);
-}
-
-// ============================================================
-// Feature 3: Invite-Banner für ?room=CODE-Links
-// ============================================================
-function showInviteBanner(code) {
-  if (!els.inviteBanner || !els.inviteBannerCode) return;
-  els.inviteBannerCode.textContent = code || "—";
-  els.inviteBanner.classList.remove("hidden");
-  // Phase prüfen, um ggf. einen Zuschauer-Hinweis einzublenden.
-  if (!code) return;
-  get(ref(db, `rooms/${code}/phase`)).then(snap => {
-    const phase = snap.exists() ? snap.val() : null;
-    const inner = els.inviteBanner.querySelector("p");
-    if (!inner) return;
-    if (phase && phase !== "lobby" && phase !== "finished") {
-      inner.innerHTML = `Im Raum <span id="inviteBannerCode">${code}</span> läuft bereits eine Partie. Mit deinem Namen kannst du als <strong>Zuschauer</strong> beitreten.`;
-    } else {
-      inner.innerHTML = `Du wurdest in Raum <span id="inviteBannerCode">${code}</span> eingeladen. Trage oben deinen Namen ein und tippe auf <em>Raum betreten</em>.`;
-    }
-  }).catch(() => {});
-}
-function hideInviteBanner() {
-  if (!els.inviteBanner) return;
-  els.inviteBanner.classList.add("hidden");
-}
-
-// ============================================================
-// Feature 4: Wiederverwendbares Confirm-Overlay
-// ============================================================
-function askConfirm({ title = "Bestätigen", message = "Bist du sicher?", okText = "Bestätigen", cancelText = "Abbrechen" } = {}) {
-  return new Promise(resolve => {
-    const ov = els.confirmOverlay;
-    if (!ov || !els.confirmOkBtn || !els.confirmCancelBtn) {
-      resolve(window.confirm(message));
-      return;
-    }
-    if (els.confirmTitle) els.confirmTitle.textContent = title;
-    if (els.confirmMessage) els.confirmMessage.textContent = message;
-    els.confirmOkBtn.textContent = okText;
-    els.confirmCancelBtn.textContent = cancelText;
-
-    const close = (val) => {
-      ov.classList.add("hidden");
-      els.confirmOkBtn.removeEventListener("click", okHandler);
-      els.confirmCancelBtn.removeEventListener("click", cancelHandler);
-      ov.removeEventListener("click", backdropHandler);
-      document.removeEventListener("keydown", keyHandler);
-      resolve(val);
-    };
-    const okHandler = () => close(true);
-    const cancelHandler = () => close(false);
-    const backdropHandler = (e) => { if (e.target === ov) close(false); };
-    const keyHandler = (e) => { if (e.key === "Escape") close(false); };
-    els.confirmOkBtn.addEventListener("click", okHandler);
-    els.confirmCancelBtn.addEventListener("click", cancelHandler);
-    ov.addEventListener("click", backdropHandler);
-    document.addEventListener("keydown", keyHandler);
-    ov.classList.remove("hidden");
-  });
-}
-
 
 function setStatusText(state) {
   els.roomLabel.textContent = currentRoomCode || "—";
@@ -1252,24 +849,11 @@ function renderRoom(state) {
   order.forEach((id, index) => {
     const p = state.players[id];
     const offline = isPlayerOffline(p);
-    const graceSec = graceSecondsLeft(p);
-
-    let offlineBadge = "";
-    if (offline) {
-      if (graceSec !== null && graceSec > 0) {
-        const mm = Math.floor(graceSec / 60);
-        const ss = graceSec % 60;
-        const timeLabel = mm > 0 ? `${mm}:${String(ss).padStart(2, "0")}` : `${graceSec}s`;
-        offlineBadge = `<span class="badge offline" title="Rejoin-Frist läuft">⏳ ${timeLabel}</span>`;
-      } else {
-        offlineBadge = '<span class="badge offline" title="Kurz weg – Rejoin möglich">⛅ offline</span>';
-      }
-    }
 
     const row = document.createElement("div");
     row.className = "playerRow" + (offline ? " offline" : "");
     row.innerHTML = `
-      <div class="name">${escapeHtml(p.name)} ${id === currentPlayerId ? '<span class="badge me">Ich</span>' : ''} ${p.isBot ? '<span class="badge bot">Bot</span>' : ''} ${state.hostId === id ? '<span class="badge host">Host</span>' : ''} ${offlineBadge}</div>
+      <div class="name">${escapeHtml(p.name)} ${id === currentPlayerId ? '<span class="badge me">Ich</span>' : ''} ${p.isBot ? '<span class="badge bot">Bot</span>' : ''} ${state.hostId === id ? '<span class="badge host">Host</span>' : ''} ${offline ? '<span class="badge offline" title="Kurz weg – Rejoin möglich">⛅ offline</span>' : ''}</div>
       <div>${Number(p.score || 0)} P</div>
       <div>${currentTurn === id && !state.trickReadyToClear ? (state.phase === "bidding" ? '<span class="badge">Ansage</span>' : '<span class="badge">Zug</span>') : ''}</div>
     `;
@@ -1403,15 +987,13 @@ function renderRoom(state) {
   els.nextRoundBtn.disabled = !(isFinished && state.hostId === currentPlayerId);
   els.nextRoundBtn.textContent = "Neues Spiel";
 
-  if (state.trickReadyToClear && !isRoomPaused(state)) {
+  if (state.trickReadyToClear) {
     if (state.hostId === currentPlayerId) {
       if (!window.clearTrickTimeout) {
         window.clearTrickTimeout = setTimeout(async () => {
           window.clearTrickTimeout = null;
-          if (isRoomPaused(roomCache)) return; // Sicherheitsnetz: Pause unterbricht das Abräumen
           await runTransaction(roomRef(currentRoomCode), r => {
             if (!r || !r.trickReadyToClear) return r;
-            if (isRoomPaused(r)) return r;
             r.currentTrick = [];
             r.trickReadyToClear = false;
             r.turnIndex = r.order.indexOf(r.trickWinner);
@@ -1447,7 +1029,6 @@ function renderRoom(state) {
   maybeAutoPassBots(state);
   maybeAutoCloudAdjustBots(state);
   syncCloudAdjustOverlay(state);
-  renderPauseControls(state);
 }
 
 function botCloudDelta(room, playerId) {
@@ -1467,7 +1048,6 @@ function botCloudDelta(room, playerId) {
 function maybeAutoCloudAdjustBots(state) {
   if (!state || state.phase !== "cloud_adjust") return;
   if (state.hostId !== currentPlayerId) return;
-  if (isRoomPaused(state)) return;
   const targets = state.cloudAdjustTargets || [];
   const needs = targets.filter(id => isBot(state, id) && !(state.cloudAdjust && state.cloudAdjust[id] && state.cloudAdjust[id].done));
   if (!needs.length) return;
@@ -1526,7 +1106,6 @@ function syncCloudAdjustOverlay(state) {
 function maybeAutoPassBots(state) {
   if (!state || state.phase !== "passing_cards") return;
   if (state.hostId !== currentPlayerId) return;
-  if (isRoomPaused(state)) return;
   const order = playerIds(state);
   const needs = order.filter(id => isBot(state, id) && !(state.pass && state.pass[id]));
   if (!needs.length) return;
@@ -1642,8 +1221,7 @@ let __autoNextTimer = null;
 function scheduleAutoNextIfNeeded(state) {
   if (!state) return;
   // Auto-Weiter gilt nur für round_summary, nicht für finished (dort soll der Gewinner-Screen bleiben).
-  // Im Pause-Modus passiert NICHTS automatisch.
-  if (state.phase !== "round_summary" || !state.fastMode || state.hostId !== currentPlayerId || isRoomPaused(state)) {
+  if (state.phase !== "round_summary" || !state.fastMode || state.hostId !== currentPlayerId) {
     if (__autoNextTimer) { clearTimeout(__autoNextTimer); __autoNextTimer = null; }
     return;
   }
@@ -1654,7 +1232,6 @@ function scheduleAutoNextIfNeeded(state) {
     if (roomCache.phase !== "round_summary") return;
     if (!roomCache.fastMode) return;
     if (roomCache.hostId !== currentPlayerId) return;
-    if (isRoomPaused(roomCache)) return;
     try { await nextRound(); } catch (e) { console.error("Auto-Weiter fehlgeschlagen:", e); }
   }, 2400);
 }
@@ -2154,11 +1731,6 @@ function roomStateOrDefault(roomCode, playerName, playerId) {
     specials: defaultSpecialsFor(false),
     fastMode: false,
     strictBidRule: true,
-    paused: false,
-    pausedAt: null,
-    pausedBy: null,
-    updatedAt: Date.now(),
-    listedAt: Date.now(),
     players: {
       [playerId]: {
         id: playerId,
@@ -2208,12 +1780,8 @@ async function joinOrCreateRoom(isCreate = false) {
     if (!room) {
       room = roomStateOrDefault(roomCode, name, currentPlayerId);
       room.createdAt = Date.now();
-      room.updatedAt = Date.now();
-      room.listedAt = Date.now();
       return room;
     }
-    // Bei jedem Beitritt aktualisieren wir updatedAt, damit der Raum frisch in der Liste bleibt.
-    room.updatedAt = Date.now();
 
     room.players = room.players || {};
     room.order = Array.isArray(room.order) ? room.order : Object.keys(room.players);
@@ -2235,14 +1803,11 @@ async function joinOrCreateRoom(isCreate = false) {
         };
         room.order.push(currentPlayerId);
       } else {
-        const wasOffline = isPlayerOffline(room.players[currentPlayerId]);
         room.players[currentPlayerId].name = name;
         room.players[currentPlayerId].connected = true;
         room.players[currentPlayerId].lastSeen = Date.now();
-        room.players[currentPlayerId].disconnectedAt = null;
-        room.players[currentPlayerId].leaveDeadline = null;
         // Falls jemand "kurz weg" war, freundlich anzeigen
-        if (room.phase !== "lobby" && wasOffline) {
+        if (room.phase !== "lobby") {
           room.message = `${name} ist wieder da.`;
         }
       }
@@ -2258,8 +1823,6 @@ async function joinOrCreateRoom(isCreate = false) {
     room.players[currentPlayerId].name = name;
     room.players[currentPlayerId].connected = true;
     room.players[currentPlayerId].lastSeen = Date.now();
-    room.players[currentPlayerId].disconnectedAt = null;
-    room.players[currentPlayerId].leaveDeadline = null;
     return room;
   });
 
@@ -2268,18 +1831,8 @@ async function joinOrCreateRoom(isCreate = false) {
     return;
   }
 
-  hideInviteBanner();
   showJoinView(false);
   listenToRoom(roomCode);
-}
-
-// Sicherstellen, dass eine Raum-Änderung auch das updatedAt-Feld setzt.
-// Wird von Schreibstellen aufgerufen, die nicht selbst updatedAt schreiben.
-function touchRoom(room) {
-  if (room && typeof room === "object") {
-    room.updatedAt = Date.now();
-  }
-  return room;
 }
 
 function listenToRoom(roomCode) {
@@ -2302,242 +1855,55 @@ let __heartbeatTimer = null;
 
 function setupPresence(roomCode) {
   __presenceRoom = roomCode;
-  const playerRef = ref(db, `rooms/${roomCode}/players/${currentPlayerId}`);
   const connRef = ref(db, `rooms/${roomCode}/players/${currentPlayerId}/connected`);
   const seenRef = ref(db, `rooms/${roomCode}/players/${currentPlayerId}/lastSeen`);
-  const discAtRef = ref(db, `rooms/${roomCode}/players/${currentPlayerId}/disconnectedAt`);
-  const deadlineRef = ref(db, `rooms/${roomCode}/players/${currentPlayerId}/leaveDeadline`);
 
-  // Beim Verbindungsverlust: connected=false, disconnectedAt setzen.
-  // leaveDeadline kann RTDB nicht direkt mit „jetzt + 2 min" setzen – also nutzen wir einen
-  // genügend großen Marker (Date.now()+LEAVE_GRACE_MS) clientseitig kurz vorm Disconnect.
+  // Beim Verbindungsverlust automatisch als offline markieren.
   try {
     onDisconnect(connRef).set(false).catch(() => {});
     onDisconnect(seenRef).set(serverTimestamp()).catch(() => {});
-    onDisconnect(discAtRef).set(serverTimestamp()).catch(() => {});
-    onDisconnect(deadlineRef).set(Date.now() + LEAVE_GRACE_MS + 60_000).catch(() => {});
   } catch (e) {
     console.warn("onDisconnect nicht verfügbar:", e?.message);
   }
 
-  // Direkt jetzt als online markieren und etwaige frühere Disconnect-Marker entfernen.
-  update(playerRef, {
+  // Direkt jetzt als online markieren – falls Eintrag existiert.
+  update(ref(db, `rooms/${roomCode}/players/${currentPlayerId}`), {
     connected: true,
-    lastSeen: serverTimestamp(),
-    disconnectedAt: null,
-    leaveDeadline: null
+    lastSeen: serverTimestamp()
   }).catch(() => {});
 
   // Heartbeat alle 15 Sekunden.
   if (__heartbeatTimer) clearInterval(__heartbeatTimer);
   __heartbeatTimer = setInterval(() => {
     if (__presenceRoom !== roomCode) return;
-    update(playerRef, {
+    update(ref(db, `rooms/${roomCode}/players/${currentPlayerId}`), {
       lastSeen: serverTimestamp(),
       connected: true
     }).catch(() => {});
   }, 15000);
-
-  // Host startet den Grace-Sweep für abgelaufene Plätze.
-  startGraceSweep();
-  // Countdown-Tick für alle Clients, damit das Rejoin-Badge tickt.
-  startCountdownTick();
 }
 
 function teardownPresence() {
   if (__heartbeatTimer) { clearInterval(__heartbeatTimer); __heartbeatTimer = null; }
   __presenceRoom = null;
-  stopGraceSweep();
-  stopCountdownTick();
 }
 
 // Heuristik: ein Spieler gilt als offline, wenn `connected === false`
-// ODER `lastSeen` älter als 45 s ist (Heartbeat-Aussetzer),
-// ODER explizit ein disconnectedAt gesetzt ist (Rejoin-Frist läuft).
+// ODER `lastSeen` älter als 45 s ist (Heartbeat-Aussetzer).
 function isPlayerOffline(player) {
   if (!player) return false;
   if (player.isBot) return false;
   if (player.connected === false) return true;
-  if (typeof player.disconnectedAt === "number" && player.disconnectedAt > 0) return true;
   const seen = typeof player.lastSeen === "number" ? player.lastSeen : 0;
   if (seen && Date.now() - seen > 45000) return true;
   return false;
 }
 
-// Wie viele Sekunden bleiben noch, bis der Platz endgültig freigegeben wird?
-// Liefert null, wenn keine Frist läuft.
-function graceSecondsLeft(player) {
-  if (!player) return null;
-  if (player.isBot) return null;
-  const dl = typeof player.leaveDeadline === "number" ? player.leaveDeadline : 0;
-  if (!dl) return null;
-  const left = Math.max(0, dl - Date.now());
-  return Math.ceil(left / 1000);
-}
-
-// Helfer: Setzt einen Spieler in den ‚kurz weg'-Zustand (Rejoin-Frist startet).
-function markPlayerDisconnected(room, playerId) {
-  if (!room?.players?.[playerId]) return;
-  const p = room.players[playerId];
-  if (p.isBot) return;
-  p.connected = false;
-  p.disconnectedAt = Date.now();
-  p.leaveDeadline = Date.now() + LEAVE_GRACE_MS;
-}
-
-// Hilfsfunktion: alle Spieler, deren Rejoin-Frist abgelaufen ist, jetzt entfernen.
-// Wird vom Host periodisch aufgerufen, sodass nicht alle Clients konkurrieren.
-function sweepExpiredPlayers(room) {
-  if (!room || !room.players) return false;
-  // Pause: Plätze bleiben dauerhaft reserviert, kein endgültiges Entfernen.
-  if (room.paused === true) return false;
-  const now = Date.now();
-  let changed = false;
-  const toRemove = [];
-  for (const id of Object.keys(room.players)) {
-    const p = room.players[id];
-    if (!p || p.isBot) continue;
-    const dl = typeof p.leaveDeadline === "number" ? p.leaveDeadline : 0;
-    if (dl && dl <= now) {
-      toRemove.push(id);
-    }
-  }
-  if (!toRemove.length) return false;
-
-  for (const id of toRemove) {
-    delete room.players[id];
-    if (Array.isArray(room.order)) room.order = room.order.filter(x => x !== id);
-    if (room.hands && room.hands[id]) delete room.hands[id];
-    if (room.bids && room.bids[id] !== undefined) delete room.bids[id];
-    if (room.tricksTaken && room.tricksTaken[id] !== undefined) delete room.tricksTaken[id];
-    if (room.cloudTricks && room.cloudTricks[id] !== undefined) delete room.cloudTricks[id];
-    if (room.cloudAdjust && room.cloudAdjust[id] !== undefined) delete room.cloudAdjust[id];
-    if (Array.isArray(room.cloudAdjustTargets)) {
-      room.cloudAdjustTargets = room.cloudAdjustTargets.filter(x => x !== id);
-    }
-    if (room.pass && room.pass[id] !== undefined) delete room.pass[id];
-    if (room.hostId === id) {
-      const rest = (room.order || []).filter(x => !x.startsWith("bot_"));
-      room.hostId = rest[0] || (room.order || [])[0] || null;
-    }
-    changed = true;
-  }
-  if (changed) {
-    if (Array.isArray(room.order)) {
-      if (typeof room.turnIndex === "number" && room.turnIndex >= room.order.length) room.turnIndex = 0;
-      if (typeof room.dealerIndex === "number" && room.dealerIndex >= room.order.length) room.dealerIndex = 0;
-      if (typeof room.bidStartIndex === "number" && room.bidStartIndex >= room.order.length) room.bidStartIndex = 0;
-    }
-    room.message = `Ein Spieler ist nicht zurückgekommen – Platz freigegeben.`;
-  }
-  return changed;
-}
-
-// Periodischer Sweep: nur Host triggert das, damit nicht alle Clients schreiben.
-let __sweepTimer = null;
-function startGraceSweep() {
-  if (__sweepTimer) clearInterval(__sweepTimer);
-  __sweepTimer = setInterval(async () => {
-    if (!currentRoomCode || !roomCache) return;
-    if (roomCache.hostId !== currentPlayerId) return;
-    if (isRoomPaused(roomCache)) return; // Pause: kein Sweep
-    // Nur sweepen, wenn tatsächlich eine Frist abgelaufen ist.
-    const expired = Object.values(roomCache.players || {}).some(p => {
-      if (!p || p.isBot) return false;
-      return typeof p.leaveDeadline === "number" && p.leaveDeadline > 0 && p.leaveDeadline <= Date.now();
-    });
-    if (!expired) return;
-    try {
-      await runTransaction(roomRef(currentRoomCode), room => {
-        if (!room) return room;
-        sweepExpiredPlayers(room);
-        return room;
-      });
-    } catch (e) {
-      console.warn("Sweep fehlgeschlagen:", e?.message);
-    }
-  }, 10000);
-}
-function stopGraceSweep() {
-  if (__sweepTimer) { clearInterval(__sweepTimer); __sweepTimer = null; }
-}
-
-// Spielerliste alle 5 s neu zeichnen, solange jemand in der Rejoin-Frist ist,
-// damit das Countdown-Badge live tickt (auch ohne neue Firebase-Events).
-let __countdownTickTimer = null;
-function startCountdownTick() {
-  if (__countdownTickTimer) return;
-  __countdownTickTimer = setInterval(() => {
-    if (!roomCache || !roomCache.players) return;
-    const anyPending = Object.values(roomCache.players).some(p =>
-      p && !p.isBot && typeof p.leaveDeadline === "number" && p.leaveDeadline > Date.now()
-    );
-    if (!anyPending) return;
-    try { renderRoom(roomCache); } catch (e) {}
-  }, 5000);
-}
-function stopCountdownTick() {
-  if (__countdownTickTimer) { clearInterval(__countdownTickTimer); __countdownTickTimer = null; }
-}
-
-// ============================================================
-// Host-Löschbutton: löscht den aktuellen Raum komplett (nur Host).
-// ============================================================
-// Interne Variante ohne eigenen Confirm-Dialog: wird aus leaveRoom() heraus
-// aufgerufen, nachdem der Host das Löschen bereits bestätigt hat.
-async function deleteRoomAfterConfirm() {
-  if (!currentRoomCode) return;
-  if (!roomCache || roomCache.hostId !== currentPlayerId) {
-    showToast("Nur der Host kann den Raum löschen.");
-    return;
-  }
-
-  const code = currentRoomCode;
-  teardownPresence();
-  if (roomUnsub) { roomUnsub(); roomUnsub = null; }
-
-  try {
-    await set(roomRef(code), null);
-    showToast("Raum gelöscht.");
-  } catch (e) {
-    alert(describeFirebaseError(e, "deleteRoomAfterConfirm (set null auf rooms/" + code + ")"));
-    // Bei Fehler State trotzdem zurücksetzen, sonst hängt der Host fest.
-  }
-
-  currentRoomCode = "";
-  roomCache = null;
-  localStorage.removeItem(LOCAL.roomCode);
-  if (els.roomInput) els.roomInput.value = "";
-  showJoinView(true);
-}
-
 async function leaveRoom() {
   if (!currentRoomCode) return;
-
-  const meIsHost = !!roomCache && roomCache.hostId === currentPlayerId;
-
-  // Erste Bestätigung: Verlassen mit Hinweis auf 2-Minuten-Rejoin-Reservierung.
-  const leaveConfirm = await askConfirm({
-    title: "Raum verlassen?",
-    message: "Dein Platz bleibt 2 Minuten reserviert – du kannst mit demselben Gerät/Browser einfach wieder reinkommen.\n\nMöchtest du den Raum wirklich verlassen?",
-    okText: "Verlassen",
-    cancelText: "Abbrechen"
-  });
+  
+  const leaveConfirm = confirm("Möchtest du den Raum wirklich verlassen?");
   if (!leaveConfirm) return;
-
-  // Host: nach dem Verlassen-OK zusätzlich fragen, ob der Raum gleich gelöscht werden soll.
-  if (meIsHost) {
-    const deleteAlso = await askConfirm({
-      title: "Raum löschen?",
-      message: "Möchtest du den Raum löschen?\n\nJa: Raum wird komplett entfernt, alle Spieler verlieren den Zugriff.\nNein: Du verlässt normal, der Raum bleibt bestehen (Host wird ggf. übergeben).",
-      okText: "Ja, Raum löschen",
-      cancelText: "Nein, nur verlassen"
-    });
-    if (deleteAlso) {
-      await deleteRoomAfterConfirm();
-      return;
-    }
-  }
 
   const roomReference = roomRef(currentRoomCode);
 
@@ -2551,60 +1917,40 @@ async function leaveRoom() {
     await runTransaction(roomReference, room => {
       if (!room) return room;
 
-      const isLobby = room.phase === "lobby" || room.phase === "finished";
-
-      if (isLobby) {
-        // In der Lobby (oder nach Spielende): wie bisher endgültig entfernen.
-        if (room.players && room.players[currentPlayerId]) {
-          delete room.players[currentPlayerId];
-        }
-        if (Array.isArray(room.order)) {
-          room.order = room.order.filter(id => id !== currentPlayerId);
-        }
-        if (room.hands && room.hands[currentPlayerId]) delete room.hands[currentPlayerId];
-        if (room.bids && room.bids[currentPlayerId] !== undefined) delete room.bids[currentPlayerId];
-        if (room.tricksTaken && room.tricksTaken[currentPlayerId] !== undefined) delete room.tricksTaken[currentPlayerId];
-
-        if (room.hostId === currentPlayerId) {
-          const remainingPlayers = room.order ? room.order.filter(id => !id.startsWith("bot_")) : [];
-          if (remainingPlayers.length > 0) {
-            room.hostId = remainingPlayers[0];
-            room.message = `Der bisherige Host hat den Raum verlassen. Neuer Host ist ${room.players[room.hostId]?.name || "Spieler"}.`;
-          } else {
-            return null;
-          }
-        } else {
-          room.message = `${currentName || "Ein Spieler"} hat den Raum verlassen.`;
-        }
-        if (room.order && room.order.length > 0) {
-          if (room.turnIndex >= room.order.length) room.turnIndex = 0;
-          if (room.dealerIndex >= room.order.length) room.dealerIndex = 0;
-          if (room.bidStartIndex >= room.order.length) room.bidStartIndex = 0;
-        }
-        return room;
+      if (room.players && room.players[currentPlayerId]) {
+        delete room.players[currentPlayerId];
+      }
+      if (Array.isArray(room.order)) {
+        room.order = room.order.filter(id => id !== currentPlayerId);
+      }
+      if (room.hands && room.hands[currentPlayerId]) {
+        delete room.hands[currentPlayerId];
+      }
+      if (room.bids && room.bids[currentPlayerId] !== undefined) {
+        delete room.bids[currentPlayerId];
+      }
+      if (room.tricksTaken && room.tricksTaken[currentPlayerId] !== undefined) {
+        delete room.tricksTaken[currentPlayerId];
       }
 
-      // Mid-game: Spieler bleibt im Raum mit Rejoin-Frist.
-      markPlayerDisconnected(room, currentPlayerId);
-
-      // Host übergeben, damit das Spiel nicht einfriert.
       if (room.hostId === currentPlayerId) {
-        const onlineHumans = (room.order || [])
-          .filter(id => id !== currentPlayerId)
-          .filter(id => !id.startsWith("bot_"))
-          .filter(id => !isPlayerOffline(room.players?.[id]));
-        const fallbackHuman = (room.order || [])
-          .filter(id => id !== currentPlayerId && !id.startsWith("bot_"));
-        const newHost = onlineHumans[0] || fallbackHuman[0] || null;
-        if (newHost) {
-          room.hostId = newHost;
-          room.message = `${currentName || "Host"} ist kurz weg – neuer Host: ${room.players[newHost]?.name || "Spieler"}.`;
+        const remainingPlayers = room.order ? room.order.filter(id => !id.startsWith("bot_")) : [];
+        if (remainingPlayers.length > 0) {
+          room.hostId = remainingPlayers[0];
+          room.message = `Der bisherige Host hat den Raum verlassen. Neuer Host ist ${room.players[room.hostId]?.name || "Spieler"}.`;
         } else {
-          room.message = `${currentName || "Host"} ist kurz weg. Platz bleibt 2 Min reserviert.`;
+          return null;
         }
       } else {
-        room.message = `${currentName || "Ein Spieler"} ist kurz weg – Platz bleibt 2 Min reserviert.`;
+        room.message = `${currentName || "Ein Spieler"} hat den Raum verlassen.`;
       }
+
+      if (room.phase !== "lobby" && room.order && room.order.length > 0) {
+        if (room.turnIndex >= room.order.length) room.turnIndex = 0;
+        if (room.dealerIndex >= room.order.length) room.dealerIndex = 0;
+        if (room.bidStartIndex >= room.order.length) room.bidStartIndex = 0;
+      }
+
       return room;
     });
   } catch (e) {
@@ -2630,113 +1976,8 @@ async function startGame() {
   });
 }
 
-// ============================================================
-// PAUSE / RESUME
-// Pause friert das Spiel ein, ohne die Phase zu verändern. Die Plätze-Reservierung
-// läuft NICHT ab, Auto-Aktionen (Bots, Fast-Mode, Stich-Abräumen) sind aus.
-// ============================================================
-async function pauseGame() {
-  if (!roomCache || roomCache.hostId !== currentPlayerId) return;
-  if (roomCache.phase === "lobby" || roomCache.phase === "finished") return; // nichts zu pausieren
-  if (isRoomPaused(roomCache)) return;
-  const meName = roomCache.players?.[currentPlayerId]?.name || currentName || "Host";
-  try {
-    await runTransaction(roomRef(currentRoomCode), room => {
-      if (!room) return room;
-      if (room.phase === "lobby" || room.phase === "finished") return room;
-      room.paused = true;
-      room.pausedAt = Date.now();
-      room.pausedBy = String(meName).slice(0, 64);
-      room.message = `⏸ ${meName} hat das Spiel pausiert. Plätze bleiben dauerhaft reserviert.`;
-      room.updatedAt = Date.now();
-      return room;
-    });
-    showToast("⏸ Spiel pausiert");
-  } catch (e) {
-    alert(describeFirebaseError(e, "pauseGame (runTransaction auf rooms/" + currentRoomCode + ")"));
-  }
-}
-
-async function resumeGame() {
-  if (!roomCache || roomCache.hostId !== currentPlayerId) return;
-  if (!isRoomPaused(roomCache)) return;
-  const meName = roomCache.players?.[currentPlayerId]?.name || currentName || "Host";
-  try {
-    await runTransaction(roomRef(currentRoomCode), room => {
-      if (!room) return room;
-      room.paused = false;
-      room.pausedAt = null;
-      // pausedBy darf stehen bleiben, schadet nichts. Setze updatedAt.
-      room.updatedAt = Date.now();
-      // Faires Reset: Nach einer Pause bekommen offline-Spieler eine
-      // frische Rejoin-Frist, statt sofort wegen abgelaufenem leaveDeadline zu fliegen.
-      if (room.players && typeof room.players === "object") {
-        const now = Date.now();
-        for (const id of Object.keys(room.players)) {
-          const p = room.players[id];
-          if (!p || p.isBot) continue;
-          if (typeof p.leaveDeadline === "number" && p.leaveDeadline > 0) {
-            p.leaveDeadline = now + LEAVE_GRACE_MS;
-          }
-        }
-      }
-      room.message = `▶️ ${meName} hat das Spiel fortgesetzt.`;
-      return room;
-    });
-    showToast("▶️ Spiel fortgesetzt");
-  } catch (e) {
-    alert(describeFirebaseError(e, "resumeGame (runTransaction auf rooms/" + currentRoomCode + ")"));
-  }
-}
-
-// Pause-Button & -Banner im Game-View synchronisieren.
-function renderPauseControls(state) {
-  const inGame = !!state && state.phase !== "lobby" && state.phase !== "finished";
-  const paused = isRoomPaused(state);
-  const meIsHost = !!state && state.hostId === currentPlayerId;
-
-  if (els.pauseBtn) {
-    if (inGame) {
-      els.pauseBtn.classList.remove("hidden");
-      els.pauseBtn.disabled = !meIsHost;
-      els.pauseBtn.textContent = paused ? "▶️ Spiel fortsetzen" : "⏸ Spiel pausieren";
-      els.pauseBtn.classList.toggle("resume", !!paused);
-      els.pauseBtn.setAttribute("aria-pressed", paused ? "true" : "false");
-      els.pauseBtn.title = meIsHost
-        ? (paused ? "Spiel fortsetzen" : "Plätze bleiben während Pause reserviert")
-        : "Nur der Host kann pausieren";
-    } else {
-      els.pauseBtn.classList.add("hidden");
-    }
-  }
-
-  if (els.pauseBanner) {
-    els.pauseBanner.classList.toggle("hidden", !paused);
-    if (paused && els.pauseBannerText) {
-      const who = state && state.pausedBy ? String(state.pausedBy) : "Host";
-      const note = meIsHost
-        ? "Du bist der Host. Tippe oben auf „Spiel fortsetzen“, sobald alle wieder bereit sind."
-        : "Komm später über denselben Raumcode oder Link einfach wieder rein. Dein Platz bleibt reserviert.";
-      els.pauseBannerText.textContent = `Pausiert von ${who}. ${note}`;
-    }
-  }
-}
-
 async function resetToLobby() {
   if (!roomCache || roomCache.hostId !== currentPlayerId) return;
-
-  // Feature 4: Sicherheitsabfrage, wenn mitten in einer Runde zurückgesetzt wird.
-  const inGame = roomCache.phase !== "lobby" && roomCache.phase !== "finished";
-  if (inGame) {
-    const ok = await askConfirm({
-      title: "Runde zurücksetzen?",
-      message: "Möchtest du wirklich die laufende Runde zurücksetzen? Punkte, Hände und Stiche gehen verloren.",
-      okText: "Ja, zurücksetzen",
-      cancelText: "Abbrechen"
-    });
-    if (!ok) return;
-  }
-
   const roomReference = roomRef(currentRoomCode);
   await runTransaction(roomReference, room => {
     if (!room) return room;
@@ -2868,7 +2109,7 @@ async function sendBid() {
     currentSelectedBid = 0;
 
   } catch (error) {
-    alert(describeFirebaseError(error, "sendBid (runTransaction auf rooms/" + currentRoomCode + ")"));
+    alert("KRITISCHER FIREBASE FEHLER: " + error.message);
   }
 }
 
@@ -3050,7 +2291,6 @@ function maybeScheduleBot(state) {
   if (!state) return;
   if (state.phase === "round_summary" || state.phase === "finished" || state.roundNo === 0) return;
   if (state.trickReadyToClear) return; 
-  if (isRoomPaused(state)) return; // Pause: keine Bot-Züge
 
   const order = playerIds(state);
   
@@ -3338,13 +2578,6 @@ els.createBtn.addEventListener("click", () => {
 });
 els.startBtn.addEventListener("click", startGame);
 els.resetBtn.addEventListener("click", resetToLobby);
-els.pauseBtn?.addEventListener("click", () => {
-  if (isRoomPaused(roomCache)) {
-    resumeGame();
-  } else {
-    pauseGame();
-  }
-});
 els.addBotBtn.addEventListener("click", () => addBot(1));
 els.fillBotsBtn.addEventListener("click", fillBotsTo3);
 els.bidBtn.addEventListener("click", sendBid);
@@ -3502,66 +2735,16 @@ document.getElementById("shareQrToggleBtn")?.addEventListener("click", () => {
 els.roomInput.value = normalizeRoomCode(new URLSearchParams(location.search).get("room") || localStorage.getItem(LOCAL.roomCode) || "");
 maybeFillLocalRoomCode();
 
-// Feature 3: Beim Aufruf mit ?room=CODE darf nicht stillschweigend als Spectator gejoined werden.
-// Wir trennen drei Fälle:
-//   a) Reconnect (gleicher playerId ist im Raum bekannt) → direkt wieder rein.
-//   b) Name lokal gespeichert (aber playerId unbekannt) → Code vorausfüllen, im Join-View bleiben, Banner anzeigen.
-//   c) Kein Name vorhanden → wie b), zusätzlich Namensfeld fokussieren.
-// Der Auto-Join via localStorage (kein URL-Parameter) funktioniert wie bisher (Reconnect-Pfad).
-const urlRoom = normalizeRoomCode(new URLSearchParams(location.search).get("room") || "");
-const storedRoom = normalizeRoomCode(localStorage.getItem(LOCAL.roomCode) || "");
-const savedRoom = urlRoom || storedRoom;
-const fromUrl = !!urlRoom;
-
-async function isExistingPlayerInRoom(code, playerId) {
-  if (!code || !playerId) return false;
-  try {
-    const snap = await get(ref(db, `rooms/${code}/players/${playerId}`));
-    return snap.exists();
-  } catch (e) {
-    return false;
-  }
-}
-
-async function handleInitialEntry() {
-  if (!savedRoom) {
-    fetchGlobalLeaderboard();
-    subscribeActiveRooms();
-    return;
-  }
-  els.roomInput.value = savedRoom;
-  const hasName = !!(els.nameInput.value || localStorage.getItem(LOCAL.playerName));
-  const alreadyKnown = await isExistingPlayerInRoom(savedRoom, currentPlayerId);
-
-  // Reconnect-Pfad: bereits bekannt im Raum → direkt rein (egal ob Spiel läuft).
-  // Bei vom Nutzer eingegebenem URL-Parameter brauchen wir aber einen Namen.
-  if (alreadyKnown) {
-    currentRoomCode = savedRoom;
-    currentName = currentName || els.nameInput.value || localStorage.getItem(LOCAL.playerName) || "Spieler";
-    showJoinView(false);
-    listenToRoom(savedRoom);
-    return;
-  }
-
-  // Aus localStorage gemerkter Raum, der inzwischen nicht mehr existiert / Spieler nicht mehr drin.
-  // Wenn das ein „echter“ Einladungslink (?room=) war: Banner + Namensdialog.
-  if (fromUrl) {
-    showInviteBanner(savedRoom);
-    fetchGlobalLeaderboard();
-    subscribeActiveRooms();
-    if (!hasName) {
-      els.nameInput.focus();
-    }
-    return;
-  }
-
-  // Stiller Reconnect-Versuch via localStorage funktioniert nicht (Spieler nicht im Raum).
-  // Gespeicherte Raumcode löschen, normale Join-Ansicht zeigen.
-  localStorage.removeItem(LOCAL.roomCode);
+const savedRoom = normalizeRoomCode(new URLSearchParams(location.search).get("room") || localStorage.getItem(LOCAL.roomCode) || "");
+if (savedRoom) {
+  currentRoomCode = savedRoom;
+  currentName = currentName || "Spieler";
+  if (els.nameInput.value) currentName = els.nameInput.value;
+  showJoinView(false);
+  listenToRoom(savedRoom);
+} else {
   fetchGlobalLeaderboard();
-  subscribeActiveRooms();
 }
-handleInitialEntry();
 
 window.addEventListener("beforeunload", () => {
   if (currentRoomCode) localStorage.setItem(LOCAL.roomCode, currentRoomCode);
